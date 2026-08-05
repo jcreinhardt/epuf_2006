@@ -6,6 +6,9 @@ __MACOSX/
 .vscode/
 .idea/
 
+# Claude Code — personal, machine-specific (absolute paths); not shared
+.claude/settings.local.json
+
 # Python
 __pycache__/
 *.py[cod]
