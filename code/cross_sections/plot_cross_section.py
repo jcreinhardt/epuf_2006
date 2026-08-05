@@ -1,18 +1,20 @@
 #!/usr/bin/env python
-"""Histogram of one (year, sex) earnings cross-section with its fitted density overlaid.
+"""Histogram of one (age, cohort, sex) earnings cross-section with its fitted density.
 
-Re-fits the censored MLE from crosssec_fit for the chosen year and sex, and plots
-on a log-dollar axis: the raw-data density, the fitted model, and -- for the
-women's mixture -- its two weighted components. Vertical lines mark the $200 /
-taxmax-$1000 censoring thresholds; the mass outside them (fit as censored, not as
-density) shows up as the two edge spikes.
+Re-fits the censored MLE from crosssec_fit for a single cell -- one birth cohort
+observed at one age (so year = cohort + age), one sex -- and plots on a log-dollar
+axis: the raw-data density, the fitted model, and -- for the women's mixture --
+its two weighted components. Vertical lines mark the $200 / taxmax-$1000 censoring
+thresholds; the mass outside them (fit as censored, not as density) shows up as
+the two edge spikes.
 
 Men are fit with the double Pareto-lognormal (a single Normal-Laplace density),
 women with the two-component lognormal mixture -- the pairing from crosssec_fit.
 
-  python code/cross_sections/plot_cross_section.py [year] [sex]
-    year defaults to 1990; sex defaults to 2 (female) and accepts 1/2 or male/female.
-    -> output/cross_sections/<women_mixture|men_dpln>_<year>.pdf (+ .png)
+  python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]
+    age defaults to 40, cohort to 1950, sex to 2 (female); sex accepts 1/2 or
+    male/female. (age 40, cohort 1950 -> year 1990.)
+    -> output/cross_sections/<women_mixture|men_dpln>_c<cohort>_a<age>.pdf (+ .png)
 """
 import sys
 sys.path.insert(0, "code/cross_sections")
@@ -48,12 +50,13 @@ def fitted_curves(yy, sex, r):
     return dens, []
 
 
-def plot_cross_section(year=1990, sex=2):
-    """Fit and plot the (year, sex) earnings cross-section.
+def plot_cross_section(age=40, cohort=1950, sex=2):
+    """Fit and plot the (age, cohort, sex) earnings cross-section (year = cohort + age).
 
     Returns the path of the PDF written under output/cross_sections/."""
+    year = cohort + age
     highc = cf.taxmax(year) - cf.HIGH_MARGIN
-    x = cf.load_earnings(year, sex)
+    x = cf.load_earnings(year, sex, age=age)
     r = FIT[sex](x, cf.LOWC, highc)
     tlo, thi = np.log(cf.LOWC), np.log(highc)
 
@@ -83,12 +86,13 @@ def plot_cross_section(year=1990, sex=2):
     ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${np.exp(v):,.0f}"))
     ax.set_xlabel("annual earnings (log scale)")
     ax.set_ylabel("density (per unit log earnings)")
-    ax.set_title(f"{year} {LABEL[sex]} earnings: raw EPUF data vs fitted {MODEL_NAME[sex]}")
+    ax.set_title(f"cohort {cohort} at age {age} (year {year}), {LABEL[sex]}, N={x.size:,}: "
+                 f"raw EPUF data vs fitted {MODEL_NAME[sex]}")
     ax.legend(frameon=False, fontsize=9)
     fig.tight_layout()
-    pdf = f"output/cross_sections/{FILE_TAG[sex]}_{year}.pdf"
+    pdf = f"output/cross_sections/{FILE_TAG[sex]}_c{cohort}_a{age}.pdf"
     fig.savefig(pdf)
-    fig.savefig(f"output/cross_sections/{FILE_TAG[sex]}_{year}.png", dpi=150)
+    fig.savefig(f"output/cross_sections/{FILE_TAG[sex]}_c{cohort}_a{age}.png", dpi=150)
     plt.close(fig)
     print(f"wrote {pdf} and .png")
     return pdf
@@ -103,6 +107,7 @@ def _parse_sex(tok):
 
 
 if __name__ == "__main__":
-    year = int(sys.argv[1]) if len(sys.argv) > 1 else 1990
-    sex  = _parse_sex(sys.argv[2]) if len(sys.argv) > 2 else 2
-    plot_cross_section(year, sex)
+    age    = int(sys.argv[1]) if len(sys.argv) > 1 else 40
+    cohort = int(sys.argv[2]) if len(sys.argv) > 2 else 1950
+    sex    = _parse_sex(sys.argv[3]) if len(sys.argv) > 3 else 2
+    plot_cross_section(age, cohort, sex)

@@ -120,9 +120,10 @@ epuf_2006/
 │   │   ├── replicate_note_table2.sql      # replicate Table 2 of RS Note 2012-01
 │   │   └── plot_chart4_replication.py     # replicate Chart 4 → output/ssa_replication/chart4_replication.pdf
 │   └── cross_sections/
-│       ├── crosssec_fit.py                # shared (year, sex) fitters: dPlN (men) + lognormal mixture (women)
-│       ├── estimate_cross_sections.py     # fit all years × gender → output/cross_sections/cross_section_params.csv
-│       └── plot_cross_section.py          # raw histogram + fitted density, any (year, sex) → output/cross_sections/
+│       ├── crosssec_fit.py                # shared (year, sex[, age]) fitters: dPlN (men) + lognormal mixture (women)
+│       ├── estimate_cross_sections.py     # fit every (year, sex, age) cell → output/cross_sections/cross_section_params.csv
+│       ├── plot_cross_section.py          # raw histogram + fitted density, one (age, cohort, sex) cell → output/cross_sections/
+│       └── plot_aggregate_taxable.py      # aggregate taxable earnings: fitted model vs EPUF vs ASS → output/cross_sections/
 ├── processed_data/
 │   └── ssa.duckdb                     # shared DB: demographic + annual + supplement_4b1 (~1.6 GB)
 └── output/                            # generated artifacts (regenerable; not version-controlled)
@@ -131,8 +132,9 @@ epuf_2006/
     ├── ssa_replication/
     │   └── chart4_replication.pdf
     └── cross_sections/
-        ├── cross_section_params.csv       # fitted params, one row per year × gender
-        └── {women_mixture,men_dpln}_<year>.{pdf,png}
+        ├── cross_section_params.csv       # fitted params, one row per year × sex × single-year age (≥1000 obs)
+        ├── {women_mixture,men_dpln}_c<cohort>_a<age>.{pdf,png}
+        └── aggregate_taxable.{pdf,png}
 ```
 
 `raw_data/` and `processed_data/` are large and are not version-controlled; regenerate the
@@ -255,24 +257,31 @@ so the lower birth-year bound rises and fewer cohorts qualify).
 
 ## Cross-sectional distribution fits
 
-For each `(year, sex)` cross-section of **positive** capped earnings we fit a parametric
-distribution to **log-earnings** by censored maximum likelihood. The two sexes get different
-families — men a **double Pareto-lognormal** (single mode, heavy upper tail), women a
+For each `(year, sex, single-year age)` cross-section of **positive** capped earnings we fit a
+parametric distribution to **log-earnings** by censored maximum likelihood. The two sexes get
+different families — men a **double Pareto-lognormal** (single mode, heavy upper tail), women a
 **two-component lognormal mixture** (the part-time/full-time bimodality) — but they share one
 censored log-likelihood, derived below. The shared fitters live in
-`code/cross_sections/crosssec_fit.py`; run them across all years with
+`code/cross_sections/crosssec_fit.py`; run them across every cell with
 
 ```bash
-python code/cross_sections/estimate_cross_sections.py       # 1951–2006 × {male, female} → output/cross_sections/cross_section_params.csv
-python code/cross_sections/plot_cross_section.py [year] [sex]  # raw histogram + fitted density; defaults to women 1990
+python code/cross_sections/estimate_cross_sections.py [--jobs N]      # every (year, sex, age) cell, ≥1000 obs → output/cross_sections/cross_section_params.csv
+python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]  # raw histogram + fitted density; defaults to age 40, cohort 1950, women (year = cohort + age)
 ```
+
+`estimate_cross_sections.py` fits ~6.4k `(year, sex, age)` cells (single-year ages with at
+least 1000 positive-earnings observations; smaller cells are skipped) in well under a minute:
+it pulls the data once per year, fits years in parallel (BLAS pinned to one thread per worker),
+and warm-starts each age's optimiser from the previous age within a `(year, sex)` — so the
+women's mixture runs a single local solve per cell instead of its 6-point restart grid, cold-
+restarting only if that fails to converge. Each output row carries a `converged` flag.
 
 Throughout, $\varphi$ and $\Phi$ denote the standard normal pdf and cdf.
 
 ### The censored log-likelihood (shared by both models)
 
-Fix a year and sex, let the observed positive earnings be $X_1,\dots,X_N>0$, and work on the
-log scale $Y_i=\log X_i$. Each model supplies a density $f(y;\theta)$ and cdf $F(y;\theta)$
+Fix a cell (a year, sex, and single-year age), let the observed positive earnings be
+$X_1,\dots,X_N>0$, and work on the log scale $Y_i=\log X_i$. Each model supplies a density $f(y;\theta)$ and cdf $F(y;\theta)$
 for log-earnings.
 
 The recorded dollar amounts are distorted at both extremes (see [Analysis
