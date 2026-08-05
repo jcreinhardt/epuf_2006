@@ -23,11 +23,13 @@ env/
 *.log
 
 # Data and generated artifacts — large and/or regenerable, not version-controlled.
-# Rebuild the DB from raw_data with code/build_epuf_duckdb.sql + code/extract_table_4B1.py.
-# (ignore contents but keep the directories via their .gitkeep)
+# Rebuild the DB from raw_data with code/data_import/build_epuf_duckdb.sql
+# + code/data_import/extract_table_4B1.py.
+# (ignore contents but keep the directory skeletons via .gitkeep at any depth)
 raw_data/*
 processed_data/*
-output/*
+output/**
 !raw_data/.gitkeep
 !processed_data/.gitkeep
-!output/.gitkeep
+!output/**/
+!output/**/.gitkeep

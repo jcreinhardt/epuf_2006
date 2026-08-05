@@ -7,7 +7,7 @@
 --   annual       -- one row per person-year       (60,326,474 rows)
 --
 -- Run from the project root (epuf_2006/), which builds/refreshes the DB file:
---   duckdb processed_data/ssa.duckdb < code/build_epuf_duckdb.sql
+--   duckdb processed_data/ssa.duckdb < code/data_import/build_epuf_duckdb.sql
 --
 -- Paths below are relative to that working directory.
 -- Idempotent: CREATE OR REPLACE rebuilds the tables from scratch each run.

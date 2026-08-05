@@ -1,6 +1,6 @@
 -- Replicate Table 2 of Compson (2012), RS Note 2012-01:
 -- Supplement taxable earnings vs EPUF weighted (×100) capped taxable earnings, 1951–2006.
---   duckdb processed_data/ssa.duckdb < code/replicate_note_table2.sql
+--   duckdb processed_data/ssa.duckdb < code/ssa_replication/replicate_note_table2.sql
 SELECT
     s.year,
     s.reported_taxable_musd                                                  AS supp_taxable_musd,

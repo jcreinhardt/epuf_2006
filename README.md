@@ -69,8 +69,8 @@ adjustments are accounted for.
 *"Number of workers with taxable earnings, amount of earnings, and Social Security numbers
 issued, selected years 1937–2007."* Saved page: `raw_data/supplement_2008_table_4B1.source.html`
 (from `.../supplement/2008/4b.html`; SSA's edge blocks non-browser fetches, so it was captured
-from the browser). `code/extract_table_4B1.py` parses it to
-`raw_data/supplement_2008_table_4B1.csv` **and** loads it as table `supplement_4b1`
+from the browser). `code/data_import/extract_table_4B1.py` parses it to
+`output/data_import/supplement_2008_table_4B1.csv` **and** loads it as table `supplement_4b1`
 into the shared `processed_data/ssa.duckdb` (see [Database structure](#database-structure)).
 
 Used to replicate Compson (2012), whose Table 1 compares the EPUF 1% sample against the
@@ -110,15 +110,28 @@ epuf_2006/
 │   ├── EPUF2006_ANNUAL.csv                    # 1.75 GB — EPUF, one row per person-year
 │   ├── epuf_dictionary.pdf                    # EPUF field dictionary
 │   ├── READ ME FIRST.doc                      # EPUF release notes
-│   ├── supplement_2008_table_4B1.csv          # ASS Table 4.B1, extracted (1937–2007)
 │   └── supplement_2008_table_4B1.source.html  # ASS Table 4.B1, saved source page
 ├── code/
-│   ├── build_epuf_duckdb.sql          # load EPUF CSVs → ssa.duckdb (demographic, annual)
-│   ├── extract_table_4B1.py           # parse saved 4.B1 HTML → CSV + ssa.duckdb (supplement_4b1)
-│   ├── example_panel_to_age60.sql     # sample analysis query (see below)
-│   └── replicate_note_table2.sql      # replicate Table 2 of RS Note 2012-01
-└── processed_data/
-    └── ssa.duckdb                     # shared DB: demographic + annual + supplement_4b1 (~1.6 GB)
+│   ├── data_import/
+│   │   ├── build_epuf_duckdb.sql          # load EPUF CSVs → ssa.duckdb (demographic, annual)
+│   │   └── extract_table_4B1.py           # parse saved 4.B1 HTML → CSV + ssa.duckdb (supplement_4b1)
+│   ├── ssa_replication/
+│   │   ├── example_panel_to_age60.sql     # sample analysis query (see below)
+│   │   ├── replicate_note_table2.sql      # replicate Table 2 of RS Note 2012-01
+│   │   └── plot_chart4_replication.py     # replicate Chart 4 → output/ssa_replication/chart4_replication.pdf
+│   └── cross_sections/
+│       ├── fit_dpln_male_1990.py          # double Pareto-lognormal fit, 1990 men
+│       ├── fit_lognorm_mix_women_1990.py  # two-component lognormal-mixture fit, 1990 women
+│       └── plot_women_mixture_1990.py     # histogram + fitted density → output/cross_sections/
+├── processed_data/
+│   └── ssa.duckdb                     # shared DB: demographic + annual + supplement_4b1 (~1.6 GB)
+└── output/                            # generated artifacts (regenerable; not version-controlled)
+    ├── data_import/
+    │   └── supplement_2008_table_4B1.csv  # ASS Table 4.B1, extracted (1937–2007)
+    ├── ssa_replication/
+    │   └── chart4_replication.pdf
+    └── cross_sections/
+        └── women_mixture_1990.{pdf,png}
 ```
 
 `raw_data/` and `processed_data/` are large and are not version-controlled; regenerate the
@@ -139,8 +152,8 @@ Build it from the project root (`epuf_2006/`) in two steps — the EPUF tables v
 then the Supplement table via the Python extractor (which also writes the CSV):
 
 ```bash
-duckdb processed_data/ssa.duckdb < code/build_epuf_duckdb.sql   # ~7 s → demographic, annual
-python code/extract_table_4B1.py                                # → supplement_4b1
+duckdb processed_data/ssa.duckdb < code/data_import/build_epuf_duckdb.sql   # ~7 s → demographic, annual
+python code/data_import/extract_table_4B1.py                                # → supplement_4b1
 ```
 
 Both steps use `CREATE OR REPLACE`, so they are idempotent and order-independent.
@@ -180,7 +193,7 @@ name and the dictionary label are noted above because the CSV header and the
 
 ## Example query — earnings panel of fully-observed histories to age 60
 
-`code/example_panel_to_age60.sql` returns a **balanced, zero-filled long panel** of annual
+`code/ssa_replication/example_panel_to_age60.sql` returns a **balanced, zero-filled long panel** of annual
 earnings for every person whose **entire earnings history through age 60 is observed**
 within the 1951–2006 window (i.e., uncensored at both ends).
 
@@ -219,7 +232,7 @@ ORDER BY cohort.id, ages.age;
 Run it with:
 
 ```bash
-duckdb processed_data/ssa.duckdb ".read code/example_panel_to_age60.sql"
+duckdb processed_data/ssa.duckdb ".read code/ssa_replication/example_panel_to_age60.sql"
 ```
 
 Lowering the assumed start age tightens the window (it requires observing more early years,

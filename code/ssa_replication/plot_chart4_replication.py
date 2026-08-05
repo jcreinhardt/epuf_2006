@@ -15,10 +15,10 @@ script reproduces the red "Final EPUF" line:
 where EPUF_capped_t = 100 * SUM(annual.earnings) (the 1% sample scaled to 100%).
 
 Reads the shared ssa.duckdb via the duckdb CLI (no python duckdb module needed)
-and writes output/chart4_replication.pdf.
+and writes output/ssa_replication/chart4_replication.pdf.
 
 Run from the epuf_2006/ project root:
-    python code/plot_chart4_replication.py
+    python code/ssa_replication/plot_chart4_replication.py
 """
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DB = ROOT / "processed_data" / "ssa.duckdb"
-OUT = ROOT / "output" / "chart4_replication.pdf"
+OUT = ROOT / "output" / "ssa_replication" / "chart4_replication.pdf"
 
 QUERY = """
 SELECT s.year AS year,

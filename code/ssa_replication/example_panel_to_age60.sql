@@ -3,8 +3,8 @@
 -- Long earnings panel for every person whose ENTIRE earnings history through
 -- age 60 is observed within the EPUF window (1951-2006), i.e. uncensored.
 --
---   duckdb processed_data/ssa.duckdb < code/example_panel_to_age60.sql
---   duckdb processed_data/ssa.duckdb ".read code/example_panel_to_age60.sql"
+--   duckdb processed_data/ssa.duckdb < code/ssa_replication/example_panel_to_age60.sql
+--   duckdb processed_data/ssa.duckdb ".read code/ssa_replication/example_panel_to_age60.sql"
 --
 -- "Full history until age 60 observed" means the whole age span
 -- [START_AGE .. 60] falls inside 1951-2006, so neither the career start nor

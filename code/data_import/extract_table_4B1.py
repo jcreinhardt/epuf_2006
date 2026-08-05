@@ -16,9 +16,9 @@ database (processed_data/ssa.duckdb) that also holds the EPUF `demographic` and
 `duckdb` CLI (already this project's build tool) — no extra Python dependency.
 
 Usage:
-    python code/extract_table_4B1.py            # uses the default paths below
-    python code/extract_table_4B1.py --html <in.html> --out <out.csv>
-    python code/extract_table_4B1.py --no-duckdb   # write the CSV only
+    python code/data_import/extract_table_4B1.py            # uses the default paths below
+    python code/data_import/extract_table_4B1.py --html <in.html> --out <out.csv>
+    python code/data_import/extract_table_4B1.py --no-duckdb   # write the CSV only
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ COLUMNS = [
 N_VALUE_CELLS = len(COLUMNS) - 2  # 9
 
 DEFAULT_HTML = Path("raw_data/supplement_2008_table_4B1.source.html")
-DEFAULT_OUT = Path("raw_data/supplement_2008_table_4B1.csv")
+DEFAULT_OUT = Path("output/data_import/supplement_2008_table_4B1.csv")
 DEFAULT_DUCKDB = Path("processed_data/ssa.duckdb")  # shared DB (also holds EPUF tables)
 DEFAULT_TABLE = "supplement_4b1"
 
@@ -121,6 +121,7 @@ def extract_table_4B1(html_path: str | Path) -> list[dict[str, str]]:
 
 
 def write_csv(rows: list[dict[str, str]], out_path: str | Path) -> None:
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=COLUMNS, lineterminator="\n")
         writer.writeheader()

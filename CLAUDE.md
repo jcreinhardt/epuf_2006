@@ -30,22 +30,36 @@ Run everything **from the project root** (`epuf_2006/`); all paths in the code a
 Build the database (two steps, idempotent via `CREATE OR REPLACE`, order-independent):
 
 ```bash
-duckdb processed_data/ssa.duckdb < code/build_epuf_duckdb.sql   # ~7 s → demographic, annual
-python code/extract_table_4B1.py                                # → supplement_4b1 (+ CSV)
+duckdb processed_data/ssa.duckdb < code/data_import/build_epuf_duckdb.sql   # ~7 s → demographic, annual
+python code/data_import/extract_table_4B1.py                                # → supplement_4b1 (+ CSV)
 ```
 
-Run analysis / replication:
+Run SSA-figure replication:
 
 ```bash
-duckdb processed_data/ssa.duckdb < code/replicate_note_table2.sql       # Table 2 of RS Note 2012-01
-duckdb processed_data/ssa.duckdb ".read code/example_panel_to_age60.sql"
-python code/plot_chart4_replication.py                                  # → output/chart4_replication.pdf
+duckdb processed_data/ssa.duckdb < code/ssa_replication/replicate_note_table2.sql       # Table 2 of RS Note 2012-01
+duckdb processed_data/ssa.duckdb ".read code/ssa_replication/example_panel_to_age60.sql"
+python code/ssa_replication/plot_chart4_replication.py                                  # → output/ssa_replication/chart4_replication.pdf
+```
+
+Run cross-sectional distribution fits (per-year earnings distributions):
+
+```bash
+python code/cross_sections/fit_dpln_male_1990.py            # dPlN fit, 1990 men
+python code/cross_sections/fit_lognorm_mix_women_1990.py    # lognormal-mixture fit, 1990 women
+python code/cross_sections/plot_women_mixture_1990.py       # → output/cross_sections/women_mixture_1990.pdf
 ```
 
 `extract_table_4B1.py` has flags: `--no-duckdb` (write CSV only), `--html/--out/--duckdb/--table`.
 
 ## Architecture
 
+- **Code and outputs are organized into three parallel sections**, each a subfolder of
+  both `code/` and `output/`: `data_import/` (build the shared DB from raw CSV + saved
+  HTML), `ssa_replication/` (replicate Compson 2012 RS Note figures/tables), and
+  `cross_sections/` (fit per-year earnings distributions — dPlN, lognormal mixture).
+  Everything is still run **from the project root**, so in-code paths stay root-relative
+  (`processed_data/ssa.duckdb`, `output/<section>/...`).
 - **Single shared DB `processed_data/ssa.duckdb`** is the integration point. Everything —
   EPUF microdata and Supplement aggregates — lives here so replication queries can `JOIN`
   microdata against the published series `USING (year)`. The two loaders each touch only
