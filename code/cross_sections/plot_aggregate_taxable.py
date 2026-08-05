@@ -60,10 +60,10 @@ def model_mean_taxable(row, taxmax):
     return np.trapz(integrand, yy) + taxmax * sf
 
 
-def model_totals():
+def model_totals(params=PARAMS):
     """Model-implied taxable total (millions USD) per year, summed over sexes."""
     tot = {}
-    with PARAMS.open() as fh:
+    with Path(params).open() as fh:
         for row in csv.DictReader(fh):
             year = int(row["year"])
             taxmax = float(row["highc"]) + cf.HIGH_MARGIN
@@ -94,8 +94,8 @@ def ass_totals():
             (ln.split(",") for ln in out.strip().splitlines())}
 
 
-def main():
-    model = model_totals()
+def main(params=PARAMS, suffix=""):
+    model = model_totals(params)
     epuf  = epuf_totals()
     ass   = ass_totals()
 
@@ -127,12 +127,13 @@ def main():
     ax2.set_title("Relative to published ASS total (1.0 = exact)")
     ax2.legend(frameon=False, fontsize=9, loc="lower right")
 
-    fig.suptitle("Aggregate taxable earnings: fitted model vs EPUF microdata vs ASS Table 4.B1",
+    tag = " (smoothed params)" if suffix else ""
+    fig.suptitle("Aggregate taxable earnings: fitted model vs EPUF microdata vs ASS Table 4.B1" + tag,
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
-    out = "output/cross_sections/aggregate_taxable.pdf"
+    out = f"output/cross_sections/aggregate_taxable{suffix}.pdf"
     fig.savefig(out)
-    fig.savefig("output/cross_sections/aggregate_taxable.png", dpi=150)
+    fig.savefig(f"output/cross_sections/aggregate_taxable{suffix}.png", dpi=150)
     plt.close(fig)
 
     # brief console summary
@@ -144,4 +145,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    params = sys.argv[1] if len(sys.argv) > 1 else PARAMS
+    suffix = "" if params == PARAMS else "_smoothed"
+    main(params, suffix)

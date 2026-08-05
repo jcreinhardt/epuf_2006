@@ -52,6 +52,22 @@ def censor_split(x, lowc, highc):
     return yi, int(low.sum()), int(high.sum())
 
 
+def _hess_diag(f, x0, rel=1e-4):
+    """Diagonal of the numerical Hessian of the negll f at the optimum x0 -- the
+    observed information per coordinate, in the optimiser's theta space. It is the
+    identifiability weight consumed by the smoothing stage (smooth_params.py):
+    near-zero along a flat ridge (defer to neighbours), large where sharply pinned."""
+    x0 = np.asarray(x0, dtype=float)
+    f0 = f(x0)
+    out = np.empty_like(x0)
+    for i in range(x0.size):
+        h = rel * max(abs(x0[i]), 1.0)
+        xp = x0.copy(); xp[i] += h
+        xm = x0.copy(); xm[i] -= h
+        out[i] = (f(xp) - 2.0 * f0 + f(xm)) / (h * h)
+    return out
+
+
 # ------------------------------------------------------------------ dPlN (men)
 def _mills(w):                      # Mills ratio (1-Phi)/phi, stable via erfcx
     return SQRT_HALF_PI * erfcx(w / SQRT2)
@@ -95,7 +111,11 @@ def dpln_theta(r):                  # pack a fitted dPlN result into a warm-star
 
 def fit_dpln(x, lowc, highc, start=None):
     """Fit the dPlN by censored MLE. `start` (a theta from dpln_theta) warm-starts
-    the optimizer from a neighbouring cell; None falls back to the moment start."""
+    the optimizer from a neighbouring cell as a single local solve; None runs a
+    small multi-start -- the moment start plus a low- and a high-alpha seed that
+    straddle the two basins of the weakly-identified upper tail -- and keeps the
+    best. (Under heavy censoring the tail is nearly flat, so a single start can
+    converge to a worse local optimum; the seeds pin down the better basin.)"""
     yi, n_low, n_high = censor_split(x, lowc, highc)
     tlo, thi = np.log(lowc), np.log(highc)
 
@@ -106,14 +126,26 @@ def fit_dpln(x, lowc, highc, start=None):
               + n_high * np.log1p(-nl_cdf(thi, a, b, nu, tau)))
         return -ll if np.isfinite(ll) else 1e18
 
-    if start is None:
+    if start is not None:
+        seeds = [start]
+    else:
+        m, s = yi.mean(), yi.std()
         a0, b0, nu0, tau0 = _mom_start(yi)
-        start = [np.log(a0), np.log(b0), nu0, np.log(tau0)]
-    res = minimize(negll, start, method="L-BFGS-B")
+        seeds = [[np.log(a0), np.log(b0), nu0, np.log(tau0)],   # moment start
+                 [np.log(3.0),  0.0, m, np.log(s)],             # low-alpha basin
+                 [np.log(30.0), 0.0, m, np.log(s)]]             # high-alpha ridge
+    res = None
+    for seed in seeds:
+        r = minimize(negll, seed, method="L-BFGS-B")
+        if res is None or r.fun < res.fun:
+            res = r
     a, b, nu, tau = np.exp(res.x[0]), np.exp(res.x[1]), res.x[2], np.exp(res.x[3])
+    hd = _hess_diag(negll, res.x)                          # info in theta=[logα,logβ,ν,logτ]
     return dict(model="dpln", n=x.size, n_low=n_low, n_high=n_high,
                 negll=float(res.fun), converged=bool(res.success),
                 alpha=a, beta=b, nu=nu, tau=tau,
+                info_alpha=float(hd[0]), info_beta=float(hd[1]),
+                info_nu=float(hd[2]), info_tau=float(hd[3]),
                 p_low_model=float(nl_cdf(tlo, a, b, nu, tau)),
                 p_high_model=float(1 - nl_cdf(thi, a, b, nu, tau)))
 
@@ -181,12 +213,16 @@ def fit_mixture(x, lowc, highc, start=None):
                     best = res
 
     mu1, mu2, s1, s2, w = _unpack(best.x)
+    hd = _hess_diag(negll, best.x)      # info in theta=[μ1,μ2,logσ1',logσ2',logit w]
     if mu1 < mu2:                       # label: component 1 = higher mean
         mu1, mu2, s1, s2, w = mu2, mu1, s2, s1, 1 - w
+        hd = hd[[1, 0, 3, 2, 4]]        # keep info aligned with the relabelled params
     p = (mu1, mu2, s1, s2, w)
     return dict(model="mixture", n=x.size, n_low=n_low, n_high=n_high,
                 negll=float(best.fun), converged=bool(best.success),
                 mu1=mu1, mu2=mu2, sig1=s1, sig2=s2, w=w,
+                info_mu1=float(hd[0]), info_mu2=float(hd[1]), info_sig1=float(hd[2]),
+                info_sig2=float(hd[3]), info_w=float(hd[4]),
                 p_low_model=float(mix_cdf(tlo, *p)),
                 p_high_model=float(mix_sf(thi, *p)))
 

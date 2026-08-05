@@ -11,8 +11,8 @@ Three speedups keep the ~6.4k-cell sweep to well under a minute:
      times, not thousands; taxmax comes free as that year's MAX(earnings).
   2. parallel across years (one worker per year, both sexes, all ages).
   3. warm starts along age: within a (year, sex) the fitted params of one age seed
-     the next age's optimiser (mixture drops its 6-point restart grid to a single
-     local solve), with a cold restart fallback if the warm solve fails.
+     the next age's optimiser, evaluated alongside a robust cold start (multi-start)
+     and kept only if it wins on likelihood -- see the keep-best note in fit_year.
 
 Only cells with at least MIN_N positive-earnings observations are fit; smaller
 cells are skipped for now. BLAS is pinned to one thread per worker so the many
@@ -48,6 +48,8 @@ SEX = {1: ("male",   cf.fit_dpln,    cf.dpln_theta),
 COLS = ["year", "sex", "age", "model", "n", "n_low", "n_high", "negll", "converged",
         "alpha", "beta", "nu", "tau",              # dPlN
         "mu1", "mu2", "sig1", "sig2", "w",         # mixture
+        "info_alpha", "info_beta", "info_nu", "info_tau",              # dPlN theta-info
+        "info_mu1", "info_mu2", "info_sig1", "info_sig2", "info_w",    # mixture theta-info
         "lowc", "highc", "p_low_model", "p_high_model"]
 
 
@@ -73,9 +75,16 @@ def fit_year(year):
         prev = None                                        # warm-start theta from previous age
         for age in sorted(by_age):                         # sweep ages upward
             x = by_age[age]
-            r = fit(x, cf.LOWC, highc, start=prev)
-            if not r["converged"] and prev is not None:    # cold restart if the warm solve failed
-                r = fit(x, cf.LOWC, highc, start=None)
+            # multi-start keep-best: the robust cold start (dPlN multi-start /
+            # mixture 6-point grid) AND the warm neighbour, keeping the lowest-negll
+            # converged fit. L-BFGS-B reports success at local optima too, so the
+            # seeds must be compared -- warm alone can lock a whole year into a
+            # worse basin (e.g. the 1957 men's upper-tail collapse).
+            cands = [fit(x, cf.LOWC, highc, start=None)]
+            if prev is not None:
+                cands.append(fit(x, cf.LOWC, highc, start=prev))
+            conv = [c for c in cands if c["converged"]]
+            r = min(conv or cands, key=lambda c: c["negll"])
             prev = pack(r) if r["converged"] else None
             r.update(year=year, sex=sex, age=int(age), lowc=cf.LOWC, highc=highc)
             rows.append(r)

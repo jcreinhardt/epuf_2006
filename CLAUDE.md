@@ -42,26 +42,49 @@ duckdb processed_data/ssa.duckdb ".read code/ssa_replication/example_panel_to_ag
 python code/ssa_replication/plot_chart4_replication.py                                  # → output/ssa_replication/chart4_replication.pdf
 ```
 
-Run cross-sectional distribution fits (per year × sex × single-year-age earnings distributions):
+Run cross-sectional distribution fits (per year × sex × single-year-age earnings
+distributions). This is a **two-stage pipeline**: fit each cell, then smooth the
+parameter surfaces (the smoothed CSV feeds a downstream polynomial extrapolation).
 
 ```bash
-python code/cross_sections/estimate_cross_sections.py [--jobs N]      # every (year, sex, age) cell → output/cross_sections/cross_section_params.csv
-python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]  # raw histogram vs fitted density; defaults to age 40, cohort 1950, women
+# stage 1 — fit every (year, sex, age) cell → cross_section_params.csv (+ per-cell info)
+python code/cross_sections/estimate_cross_sections.py [--jobs N]
+# stage 2 — penalized smooth over the age×cohort grid → cross_section_params_smoothed.csv
+python code/cross_sections/smooth_params.py [--lam L] [--neighbors K]
+
+python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]         # raw histogram vs fitted density (defaults age 40, cohort 1950, women)
+python code/cross_sections/param_visualization.py [men|women|both] [csv]      # cohort×age heatmaps of every parameter (pass the smoothed CSV for its surfaces)
+python code/cross_sections/plot_aggregate_taxable.py [params.csv]             # model vs EPUF vs ASS aggregate taxable (defaults to raw; pass smoothed CSV to check it)
+python code/cross_sections/compare_year_fits.py [yearA yearB] [ages...]       # overlay two years' male dPlN fits across ages (the 1956-vs-1957 basin diagnostic)
 ```
 
-`estimate_cross_sections.py` fits one distribution per `(year, sex, single-year age)`
-cell (~6.4k cells, ≥1000 obs each; smaller cells skipped) and runs in well under a
-minute via three tricks: one DB pull per year (not per cell), parallel across years
-(`ProcessPoolExecutor`, BLAS pinned to one thread per worker), and warm starts along
-age (each age seeds the next age's optimiser; the mixture drops its 6-point restart
-grid to a single local solve, cold-restarting only on non-convergence). The output CSV
-carries a `converged` flag per cell.
+**Stage 1** (`estimate_cross_sections.py`) fits one distribution per `(year, sex,
+single-year age)` cell (~6.4k cells, ≥1000 obs each; smaller cells skipped), ~3 min.
+Fast via one DB pull per year and parallelism across years (`ProcessPoolExecutor`,
+BLAS pinned to one thread per worker). Robust via **multi-start keep-best**: each cell
+is fit from a warm start (the previous age) *and* a cold start (dPlN: moment + low/high-α
+seeds; mixture: 6-point grid), keeping the lowest-negll converged fit — L-BFGS-B reports
+success at local optima too, so a single warm solve can lock a whole year into a worse
+basin (this was the 1957/1974 heavy-censoring aggregate bug). The CSV carries a `converged`
+flag and each cell's diagonal observed information (`info_*` columns) for stage 2.
+
+**Stage 2** (`smooth_params.py`) borrows strength across cells to resolve the flat
+likelihood ridges (the dPlN upper-tail index, the mixture's minority component) whose
+argmax wanders between near-identical neighbours. It solves, per parameter in theta
+space, a precision-weighted roughness-penalized system: weight = the stored `info_*`
+(so well-identified ν/μ1 are frozen and the aggregate is preserved, ridge params defer
+to neighbours), penalty = the residual of a local-linear fit to each cell's `--neighbors`
+(default 5) nearest neighbours (trend-preserving, isotropic). `--lam` (default 10) is an
+information threshold: a parameter is smoothed only where its own info < ~λ. The women's
+two components are smoothed as `mu2` and `log(mu1−mu2)` so the full-time/part-time modes
+stay ordered and never cross.
 
 The fits themselves live in `code/cross_sections/crosssec_fit.py` — a shared,
 `(year, sex[, age])`-parameterized module: `fit_dpln` (men, double Pareto-lognormal)
 and `fit_mixture` (women, two-component lognormal mixture), both doubly Type-I censored
-at `LOWC = $200` and a year-specific `HIGHC = taxmax(year) - $1000`, and both accepting
-an optional `start=` warm-start theta (packed by `dpln_theta` / `mix_theta`).
+at `LOWC = $200` and a year-specific `HIGHC = taxmax(year) - $1000`. Both accept an
+optional `start=` warm-start theta (packed by `dpln_theta` / `mix_theta`; `start=None`
+runs the multi-start), and both return the diagonal observed information at the optimum.
 `load_earnings(year, sex, age=None)` slices a cell; `plot_cross_section` addresses a
 cell as `(age, cohort, sex)` with `year = cohort + age`. The entry-point scripts above
 import this module; write new cross-section analyses against it too.
@@ -73,7 +96,8 @@ import this module; write new cross-section analyses against it too.
 - **Code and outputs are organized into three parallel sections**, each a subfolder of
   both `code/` and `output/`: `data_import/` (build the shared DB from raw CSV + saved
   HTML), `ssa_replication/` (replicate Compson 2012 RS Note figures/tables), and
-  `cross_sections/` (fit per-cell earnings distributions by year × sex × age — dPlN, lognormal mixture).
+  `cross_sections/` (fit per-cell earnings distributions by year × sex × age — dPlN,
+  lognormal mixture — then smooth the parameter surfaces over the age×cohort grid).
   Everything is still run **from the project root**, so in-code paths stay root-relative
   (`processed_data/ssa.duckdb`, `output/<section>/...`).
 - **Single shared DB `processed_data/ssa.duckdb`** is the integration point. Everything —
