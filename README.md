@@ -120,9 +120,9 @@ epuf_2006/
 │   │   ├── replicate_note_table2.sql      # replicate Table 2 of RS Note 2012-01
 │   │   └── plot_chart4_replication.py     # replicate Chart 4 → output/ssa_replication/chart4_replication.pdf
 │   └── cross_sections/
-│       ├── fit_dpln_male_1990.py          # double Pareto-lognormal fit, 1990 men
-│       ├── fit_lognorm_mix_women_1990.py  # two-component lognormal-mixture fit, 1990 women
-│       └── plot_women_mixture_1990.py     # histogram + fitted density → output/cross_sections/
+│       ├── crosssec_fit.py                # shared (year, sex) fitters: dPlN (men) + lognormal mixture (women)
+│       ├── estimate_cross_sections.py     # fit all years × gender → output/cross_sections/cross_section_params.csv
+│       └── plot_cross_section.py          # raw histogram + fitted density, any (year, sex) → output/cross_sections/
 ├── processed_data/
 │   └── ssa.duckdb                     # shared DB: demographic + annual + supplement_4b1 (~1.6 GB)
 └── output/                            # generated artifacts (regenerable; not version-controlled)
@@ -131,7 +131,8 @@ epuf_2006/
     ├── ssa_replication/
     │   └── chart4_replication.pdf
     └── cross_sections/
-        └── women_mixture_1990.{pdf,png}
+        ├── cross_section_params.csv       # fitted params, one row per year × gender
+        └── {women_mixture,men_dpln}_<year>.{pdf,png}
 ```
 
 `raw_data/` and `processed_data/` are large and are not version-controlled; regenerate the
@@ -251,3 +252,97 @@ so the lower birth-year bound rises and fewer cohorts qualify).
 - **`qtrs` is not "time worked".** It is an earnings-threshold credit count (max 4); since
   1978 it is a coarse function of annual earnings, not calendar quarters employed, and it
   saturates at 4 for most full-year workers.
+
+## Cross-sectional distribution fits
+
+For each `(year, sex)` cross-section of **positive** capped earnings we fit a parametric
+distribution to **log-earnings** by censored maximum likelihood. The two sexes get different
+families — men a **double Pareto-lognormal** (single mode, heavy upper tail), women a
+**two-component lognormal mixture** (the part-time/full-time bimodality) — but they share one
+censored log-likelihood, derived below. The shared fitters live in
+`code/cross_sections/crosssec_fit.py`; run them across all years with
+
+```bash
+python code/cross_sections/estimate_cross_sections.py       # 1951–2006 × {male, female} → output/cross_sections/cross_section_params.csv
+python code/cross_sections/plot_cross_section.py [year] [sex]  # raw histogram + fitted density; defaults to women 1990
+```
+
+Throughout, $\varphi$ and $\Phi$ denote the standard normal pdf and cdf.
+
+### The censored log-likelihood (shared by both models)
+
+Fix a year and sex, let the observed positive earnings be $X_1,\dots,X_N>0$, and work on the
+log scale $Y_i=\log X_i$. Each model supplies a density $f(y;\theta)$ and cdf $F(y;\theta)$
+for log-earnings.
+
+The recorded dollar amounts are distorted at both extremes (see [Analysis
+caveats](#analysis-caveats)): a bottom-code spike below ~\$100, and at the top a pile at the
+taxable maximum plus a near-cap "collapse" spike from random rounding. We therefore do not
+trust the exact values there and treat both extremes as **Type-I censored** — keeping only the
+information "value below $t_{\text{lo}}$" or "value above $t_{\text{hi}}$", at the fixed
+thresholds
+
+$$ t_{\text{lo}} = \log 200, \qquad t_{\text{hi}} = \log\!\big(\mathrm{taxmax}(\text{year}) - 1000\big). $$
+
+Only $t_{\text{hi}}$ moves with the year, through the statutory taxable maximum (recovered
+from the data as that year's maximum earnings); $t_{\text{lo}}$ and both censoring rules are
+identical across years and sexes. Partition the sample into
+
+- **left-censored:** $Y_i \le t_{\text{lo}}$, count $n_{\text{lo}}$;
+- **right-censored:** $Y_i \ge t_{\text{hi}}$, count $n_{\text{hi}}$;
+- **interior:** the remaining $n_{\text{in}} = N - n_{\text{lo}} - n_{\text{hi}}$, with log-values $\{y_i\}$.
+
+An interior observation is seen exactly and contributes its density $f(y_i;\theta)$. A
+left-censored observation reveals only the event $\{Y\le t_{\text{lo}}\}$, of probability
+$F(t_{\text{lo}};\theta)$; a right-censored one only $\{Y\ge t_{\text{hi}}\}$, of probability
+$1-F(t_{\text{hi}};\theta)$. Because the thresholds are common to all censored observations
+(that is what makes this Type-I), the censored factors collapse to powers, and the sample
+likelihood is
+
+$$ L(\theta) = \Bigg[\prod_{i\in\text{interior}} f(y_i;\theta)\Bigg]\, F(t_{\text{lo}};\theta)^{\,n_{\text{lo}}}\,\big[1-F(t_{\text{hi}};\theta)\big]^{\,n_{\text{hi}}}. $$
+
+Taking logs gives the objective maximized in `crosssec_fit.py`:
+
+$$ \ell(\theta) = \sum_{i\in\text{interior}} \log f(y_i;\theta) \;+\; n_{\text{lo}}\,\log F(t_{\text{lo}};\theta) \;+\; n_{\text{hi}}\,\log\!\big[1-F(t_{\text{hi}};\theta)\big]. $$
+
+The two models differ **only** in the closed forms of $f$ and $F$ plugged into these three
+blocks. Everything is computed in log-earnings space $y$ — the interior density and both
+thresholds alike — so the change of variables from $X$ to $Y$ needs no Jacobian.
+
+### Model A — double Pareto-lognormal (men)
+
+$Y=\log X$ follows Reed's Normal–Laplace law $NL(\alpha,\beta,\nu,\tau)$: the distribution of
+$Z+W$ with $Z\sim N(\nu,\tau^2)$ and $W$ an asymmetric Laplace with right/left rates
+$\alpha,\beta>0$. On the dollar scale this is the double Pareto-lognormal — a lognormal body
+with Pareto tails of index $\alpha$ (upper) and $\beta$ (lower). With $z=(y-\nu)/\tau$ and the
+Mills ratio $R(w)=\big(1-\Phi(w)\big)/\varphi(w)$,
+
+$$ f(y) = \frac{\alpha\beta}{\alpha+\beta}\,\varphi(z)\,\big[\,R(\alpha\tau - z) + R(\beta\tau + z)\,\big], $$
+
+$$ F(y) = \Phi(z) - \varphi(z)\,\frac{\beta\,R(\alpha\tau - z) - \alpha\,R(\beta\tau + z)}{\alpha+\beta}. $$
+
+The Mills ratio is evaluated as $R(w)=\sqrt{\pi/2}\,\operatorname{erfcx}(w/\sqrt2)$ for
+stability in the tails. The four parameters are optimized unconstrained through
+$(\log\alpha,\log\beta,\nu,\log\tau)$, warm-started by method of moments on the interior
+Normal–Laplace cumulants.
+
+### Model B — two-component lognormal mixture (women)
+
+$Y=\log X$ is a mixture of two normals with weight $w$ on the first component:
+
+$$ f(y) = \frac{w}{\sigma_1}\,\varphi\!\Big(\frac{y-\mu_1}{\sigma_1}\Big) + \frac{1-w}{\sigma_2}\,\varphi\!\Big(\frac{y-\mu_2}{\sigma_2}\Big), $$
+
+$$ F(y) = w\,\Phi\!\Big(\frac{y-\mu_1}{\sigma_1}\Big) + (1-w)\,\Phi\!\Big(\frac{y-\mu_2}{\sigma_2}\Big), $$
+
+so on the dollar scale $X$ is a mixture of two lognormals. All five parameters
+$(\mu_1,\mu_2,\sigma_1,\sigma_2,w)$ are free. The right-tail survival $1-F(t_{\text{hi}})$ is
+computed as $w\,\Phi(-z_1)+(1-w)\,\Phi(-z_2)$ to avoid cancellation. Optimization is
+unconstrained through $(\mu_1,\mu_2,\log\sigma_1,\log\sigma_2,\operatorname{logit}w)$, with a
+floor $\sigma_k \ge 0.02$ guarding the classic mixture degeneracy (the likelihood diverges as
+a component collapses onto a data point, $\sigma_k\to 0$); several deterministic restarts
+guard against local optima, and components are relabeled after the fit so component 1 is the
+higher-mean one.
+
+Both censored log-likelihoods are **fully closed form** — weighted normal pdf/cdf for the
+mixture, Normal–Laplace pdf/cdf via Mills ratios for the dPlN — so no block requires numerical
+integration; only the outer optimization is iterative.

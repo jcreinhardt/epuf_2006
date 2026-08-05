@@ -45,10 +45,15 @@ python code/ssa_replication/plot_chart4_replication.py                          
 Run cross-sectional distribution fits (per-year earnings distributions):
 
 ```bash
-python code/cross_sections/fit_dpln_male_1990.py            # dPlN fit, 1990 men
-python code/cross_sections/fit_lognorm_mix_women_1990.py    # lognormal-mixture fit, 1990 women
-python code/cross_sections/plot_women_mixture_1990.py       # → output/cross_sections/women_mixture_1990.pdf
+python code/cross_sections/estimate_cross_sections.py       # all years x gender → output/cross_sections/cross_section_params.csv
+python code/cross_sections/plot_cross_section.py [year] [sex]  # raw histogram vs fitted density; defaults to women 1990
 ```
+
+The fits themselves live in `code/cross_sections/crosssec_fit.py` — a shared,
+`(year, sex)`-parameterized module: `fit_dpln` (men, double Pareto-lognormal) and
+`fit_mixture` (women, two-component lognormal mixture), both doubly Type-I censored
+at `LOWC = $200` and a year-specific `HIGHC = taxmax(year) - $1000`. The two entry-
+point scripts above import it; write new cross-section analyses against it too.
 
 `extract_table_4B1.py` has flags: `--no-duckdb` (write CSV only), `--html/--out/--duckdb/--table`.
 
