@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+__MACOSX/
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.python-version
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+
+# Data and generated artifacts — large and/or regenerable, not version-controlled.
+# Rebuild the DB from raw_data with code/build_epuf_duckdb.sql + code/extract_table_4B1.py.
+# (ignore contents but keep the directories via their .gitkeep)
+raw_data/*
+processed_data/*
+output/*
+!raw_data/.gitkeep
+!processed_data/.gitkeep
+!output/.gitkeep
