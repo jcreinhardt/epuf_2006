@@ -15,9 +15,15 @@ that by construction, with three rules:
   * DROP the noisy tail: ignore fitted params after 2004 (the thinnest, most top-code-
     distorted years) and anchor on the 2000-2004 average per (sex, age).
 
-  * FREEZE the shape parameters (men alpha/beta/tau; women sig1/sig2/w) at that
-    2000-2004 average, constant for every extrapolated year. They carry no secular
-    trend, so holding them fixed is both the honest prior and drift-free.
+  * FREEZE the shape parameters (men alpha/beta/tau; women sig1/sig2/w) at the NEAREST
+    data edge -- the 2000-2004 average forward, the 1951-1955 average for pre-1951 years --
+    constant across the extrapolated span. They carry no secular trend, so holding them
+    fixed is the honest prior; anchoring backward on 1951-55 (not the far 2000-04 edge)
+    keeps the extrapolated upper tail era-appropriate. The 2000-04 tail is a high-inequality
+    tail, and dropping it onto the low pre-1951 taxable cap over-caps (too much earnings
+    above the cap), which understated pre-1951 aggregate taxable earnings; the near edge
+    fixes that. This mirrors the composition scheme in the validation plot, which likewise
+    reaches to 1951-55 backward and 2000-04 forward.
 
   * DRIVE the location parameters (men nu; women mu1, mu2) by the published nominal
     wage series, as a rigid log-shift of the frozen 2000-2004 age profile:
@@ -32,9 +38,9 @@ that by construction, with three rules:
     the same assumption the TR taxable-payroll benchmark is built on.
 
 In-sample (1951-2004) cells keep their iterated values; the anchor model fills only
-the pre-data years (1937-1950, walking G back with realized ASS growth), the post-2004
-years (2005-2100, walking G forward with TR growth), and the handful of sparse
-in-sample cells the fitter skipped. The retirement regime-switch needs no special
+the pre-data years (1937-1950, off the 1951-55 edge, walking G back with realized ASS
+growth), the post-2004 years (2005-2100, off the 2000-04 edge, walking G forward with TR
+growth), and the handful of sparse in-sample cells the fitter skipped. The retirement regime-switch needs no special
 handling: shape is frozen per age and the location shifts per age, so nothing is ever
 fit across ages and each age keeps its own 2000-2004 profile (retirement ages included).
 
@@ -56,7 +62,8 @@ IN      = Path("output/cross_sections/cross_section_params_iterated.csv")
 OUT     = Path("output/cross_sections/cross_section_params_extrapolated.csv")
 TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
 Y0, Y1  = 1937, 2100          # target year range for the synthesized cross-sections
-ANCHOR  = (2000, 2004)        # window whose mean sets every anchor (drops post-2004)
+ANCHOR  = (2000, 2004)        # forward anchor: shapes frozen + locations wage-shifted off here
+BACK    = (1951, 1955)        # backward anchor for pre-1951 (mirrors the composition scheme)
 DATA_LAST = 2004              # last in-sample year kept (2005-06 dropped as noisy)
 TR_WAGE_COL = "Average Annual Nominal Wage in Covered Employment APC"
 
@@ -98,26 +105,36 @@ def wage_log_index(y0, y1):
     return G
 
 
-def anchors(df):
-    """2000-2004 mean of every parameter, per (sex, age) -> dict (sex, age) -> Series."""
-    win = df[(df["year"] >= ANCHOR[0]) & (df["year"] <= ANCHOR[1])]
+def anchors(df, window):
+    """Mean of every parameter over [window] per (sex, age) -> dict (sex, age) -> Series."""
+    win = df[(df["year"] >= window[0]) & (df["year"] <= window[1])]
     a = win.groupby(["sex", "age"])[PARAM_COLS].mean()
     return {k: a.loc[k] for k in a.index}
 
 
 def build(df, y0, y1):
     G = wage_log_index(y0, y1)
-    Gbar = np.mean([G[y] for y in range(ANCHOR[0], ANCHOR[1] + 1)])
-    anc = anchors(df)
+    Gbar_fwd  = np.mean([G[y] for y in range(ANCHOR[0], ANCHOR[1] + 1)])
+    Gbar_back = np.mean([G[y] for y in range(BACK[0], BACK[1] + 1)])
+    anc_fwd   = anchors(df, ANCHOR)     # forward / default edge (2000-2004)
+    anc_back  = anchors(df, BACK)       # backward edge (1951-1955) for pre-1951 years
     kept = {(int(r.sex), int(r.age), int(r.year)): r          # iterated cells to keep verbatim
             for r in df[df["year"] <= DATA_LAST].itertuples()}
 
     rows = []
     for sex, (model, a_hi, locs, shapes) in SPEC.items():
         for age in range(15, a_hi + 1):
-            base = anc.get((sex, age))
+            base_fwd  = anc_fwd.get((sex, age))
+            base_back = anc_back.get((sex, age))
             for year in range(int(y0), int(y1) + 1):
                 k = (sex, age, year)
+                # pre-1951 anchors on the NEAR (1951-55) edge -- shape and location alike --
+                # so the extrapolated tail is era-appropriate, not the fatter 2000-04 tail;
+                # falls back to the forward edge only where 1951-55 lacks that (sex, age).
+                if year < BACK[0] and base_back is not None:
+                    base, Gbar = base_back, Gbar_back
+                else:
+                    base, Gbar = base_fwd, Gbar_fwd
                 if k in kept:                                  # in-sample interpolation, verbatim
                     r = kept[k]
                     row = {p: getattr(r, p) for p in PARAM_COLS}
