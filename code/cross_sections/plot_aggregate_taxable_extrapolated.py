@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Validate the EXTRAPOLATED parameter surfaces against ONE combined published/projected
-benchmark: ASS Table 4.B1 where it exists (aggregate taxable earnings, 1937-2007) spliced
+benchmark: the curated Annual Statistical Supplement aggregate taxable earnings (wage +
+self-employed, annual 1937-2022, from raw_data/annual_statistical_supplement.xlsx) spliced
 onto the 2023 OASDI Trustees Report intermediate projection (Taxable Payroll) afterward.
-The two agree to <2.5% in their 1970-2007 overlap, so the splice is near-seamless.
+The two agree closely in their overlap, so the splice is near-seamless.
 
 Two series are compared to that benchmark: the raw EPUF empirical aggregate (100 x
 SUM(earnings), the 1% microdata scaled to population) and our extrapolated model. EPUF
@@ -14,9 +15,10 @@ in-sample is what shows it.
 The model determines the SHAPE of each cell's earnings distribution -- hence mean
 taxable earnings per covered worker -- not how many workers there are. The worker weight
 is the EPUF empirical joint (sex, single-year age) composition of positive earners scaled
-by the TR's own worker projection:
+by the published covered-worker total: ASS num_wrk over 1937-2022 (the base underlying the
+benchmark, so the ratio's denominators match), the TR worker projection for 2023+:
 
-    workers(sex, age, y) = TR covered workers(y)  x  comp(sex, age, y)
+    workers(sex, age, y) = covered workers(y)  x  comp(sex, age, y)
 
 comp is the OBSERVED per-year EPUF composition where we have microdata (1951-2004), held
 fixed at the two data edges off-sample: the 1951-1955 average before 1951 and the
@@ -24,9 +26,9 @@ fixed at the two data edges off-sample: the 1951-1955 average before 1951 and th
 the TR has no sex/age breakdown). This matters because the composition shifted hard --
 women were 34% of earners in 1951 vs 48% in 2004 -- so forcing the 2000-04 mix onto the
 early years (the old design) over-weighted women and misfit the in-sample aggregate.
-Because comp sums to 1, the model's worker TOTAL equals the TR's every year and model / TR
-is a pure comparison of taxable earnings PER WORKER: the extrapolated distribution vs SSA's
-wage assumptions. The taxable maximum caps every mean: the EPUF top-code (1951-2006),
+Because comp sums to 1, the model's worker TOTAL equals the published covered-worker total
+every year and model / benchmark is a pure comparison of taxable earnings PER WORKER: the
+extrapolated distribution vs SSA's wage assumptions. The taxable maximum caps every mean: the EPUF top-code (1951-2006),
 $3,000 before, and AWI-indexed off 2006 forward (taxmax(y) = taxmax(2006) * AWI(y)/AWI(2006)).
 
 A dashed diagnostic overlays the OLD fixed-2000-04-composition aggregate, so the in-sample
@@ -53,6 +55,7 @@ from plot_aggregate_taxable import model_mean_taxable   # reuse E[min(exp Y, tax
 
 PARAMS = Path("output/cross_sections/cross_section_params_extrapolated.csv")
 TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
+ASS_XLSX = Path("raw_data/annual_statistical_supplement.xlsx")
 DB      = cf.DB
 MUSD    = 1e6
 TAXMAX_1937_50 = 3000.0
@@ -83,6 +86,15 @@ def trustees():
     )
 
 
+def ass_workers():
+    """Covered-worker counts (persons) per year from the ASS workbook, annual 1937-2022 --
+    the worker base underlying the ASS taxable benchmark. Weighting the model by these over
+    the published span (TR covered workers only for the 2023+ projection) makes model/benchmark
+    a denominator-matched per-worker comparison, and lets the model reach back to 1937."""
+    d = pd.read_excel(ASS_XLSX, sheet_name="data")
+    return {int(y): float(v) * 1e3 for y, v in zip(d["year"], d["num_wrk"]) if pd.notna(v)}
+
+
 def taxmax_series(years, awi):
     """Taxable maximum: $3,000 (<=1950), EPUF top-code (1951-2006), AWI-indexed off 2006."""
     out = _duck("COPY (SELECT year, MAX(earnings) FROM annual WHERE earnings>0 "
@@ -109,12 +121,23 @@ def epuf_direct():
     return {int(y): float(v) for y, v in (l.split(",") for l in out.strip().splitlines())}
 
 
+def ass_taxable():
+    """Aggregate taxable (capped) earnings ($M) per year from the curated Annual Statistical
+    Supplement workbook: wage + self-employed taxable earnings, annual 1937-2022 (1980 ASS
+    Table 30 pre-1951, 2023 ASS Table 4.B2 for 1951+). Replaces the sparse Table-4.B1 series
+    (which had only 1937/40/45/50 before 1951); reconciles to it exactly where they overlap."""
+    d = pd.read_excel(ASS_XLSX, sheet_name="data")
+    tax = (d["aggearn_tax_wage"].fillna(0) + d["aggearn_tax_se"].fillna(0))
+    return {int(y): float(v) for y, v in zip(d["year"], tax) if pd.notna(v)}
+
+
 def combined_benchmark(ass, trpay):
-    """One spliced published/projected series: ASS Table 4.B1 where it exists (1937-2007),
-    the TR 2023 taxable-payroll projection afterward. Returns (benchmark, last ASS year)."""
+    """One spliced published/projected series: the ASS taxable-earnings series where it exists
+    (annual 1937-2022), the TR 2023 taxable-payroll projection afterward. Returns
+    (benchmark, last ASS year)."""
     ass_last = max(ass)
     B = dict(trpay)
-    B.update(ass)                    # ASS overrides TR in the overlap (1970-2007)
+    B.update(ass)                    # ASS overrides TR in the overlap (1960-2022)
     return B, ass_last
 
 
@@ -206,8 +229,9 @@ def agg_composed(means, taxmax, comp_by_year, cov):
 
 def main():
     cov, awi, trpay = trustees()
+    cov.update(ass_workers())                           # ASS num_wrk over 1937-2022; TR keeps 2023+
     df = pd.read_csv(PARAMS)
-    years = sorted(set(df["year"]) & set(cov))          # model x TR-covered-workers overlap
+    years = sorted(set(df["year"]) & set(cov))          # model x covered-workers overlap (from 1937)
     taxmax = taxmax_series(years, awi)
     counts = epuf_counts()
     comp_by_year, back, fwd = composition_by_year(counts, years)
@@ -216,10 +240,8 @@ def main():
     means = model_means(PARAMS, taxmax)
     model = agg_composed(means, taxmax, comp_by_year, cov)   # observed comp in-sample, fixed off-sample
 
-    out = _duck("COPY (SELECT year, reported_taxable_musd FROM supplement_4b1 "
-                "WHERE reported_taxable_musd IS NOT NULL) TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);")
-    ass = {int(y): float(v) for y, v in (l.split(",") for l in out.strip().splitlines())}
-    bench, ass_last = combined_benchmark(ass, trpay)        # ASS pre-2008, TR after
+    ass = ass_taxable()                                     # annual 1937-2022 taxable earnings
+    bench, ass_last = combined_benchmark(ass, trpay)        # ASS through 2022, TR after
     epuf = epuf_direct()                                    # raw 1% microdata aggregate
 
     yr = np.array(years)
@@ -229,7 +251,7 @@ def main():
     # ---- levels (log y, trillions) ----
     by = sorted(bench); ey = sorted(epuf)
     ax1.plot(by, [bench[y] / 1e6 for y in by], color="k", lw=2.2,
-             label=f"benchmark: ASS 4.B1 (≤2007) + TR 2023 (after)")
+             label="benchmark: ASS taxable (1937–2022) + TR 2023 (after)")
     ax1.plot(ey, [epuf[y] / 1e6 for y in ey], color="C0", lw=1.4, marker="o", ms=2.5,
              label="EPUF (raw 1% microdata ×100)")
     ax1.plot(yr, m / 1e6, color="C3", lw=1.9, ls=":", label="extrapolated model")
