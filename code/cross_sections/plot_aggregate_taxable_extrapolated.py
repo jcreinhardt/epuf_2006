@@ -1,26 +1,36 @@
 #!/usr/bin/env python
-"""Validate the EXTRAPOLATED parameter surfaces against published aggregate taxable
-earnings: ASS Table 4.B1 (1937-2007) and the 2023 OASDI Trustees Report intermediate
-projection (Taxable Payroll, 1970-2099). The two benchmarks span the target range and
-agree to <2.5% where they overlap.
+"""Validate the EXTRAPOLATED parameter surfaces against ONE combined published/projected
+benchmark: ASS Table 4.B1 where it exists (aggregate taxable earnings, 1937-2007) spliced
+onto the 2023 OASDI Trustees Report intermediate projection (Taxable Payroll) afterward.
+The two agree to <2.5% in their 1970-2007 overlap, so the splice is near-seamless.
+
+Two series are compared to that benchmark: the raw EPUF empirical aggregate (100 x
+SUM(earnings), the 1% microdata scaled to population) and our extrapolated model. EPUF
+itself runs ~2-3% below ASS (a known EPUF-vs-Supplement gap), so the model -- which is
+anchored to EPUF -- inherits that offset; the model tracking EPUF is the real success
+criterion, and the model/benchmark and EPUF/benchmark ratios sitting on top of each other
+in-sample is what shows it.
 
 The model determines the SHAPE of each cell's earnings distribution -- hence mean
-taxable earnings per covered worker -- not how many workers there are. So per the
-stage-3 design, the worker weight is anchored entirely at the recent data edge and
-scaled by the TR's own worker projection:
+taxable earnings per covered worker -- not how many workers there are. The worker weight
+is the EPUF empirical joint (sex, single-year age) composition of positive earners scaled
+by the TR's own worker projection:
 
-    workers(sex, age, y) = TR covered workers(y)  x  comp_2000-04(sex, age)
+    workers(sex, age, y) = TR covered workers(y)  x  comp(sex, age, y)
 
-comp_2000-04 is the EPUF empirical joint (sex, single-year age) composition of positive
-earners averaged over 2000-2004 -- the fixed 2000-04 gender ratio and age profile -- so
-the model's worker TOTAL equals the TR's every year by construction and model / TR is a
-pure comparison of taxable earnings PER WORKER: the extrapolated distribution vs SSA's
+comp is the OBSERVED per-year EPUF composition where we have microdata (1951-2004), held
+fixed at the two data edges off-sample: the 1951-1955 average before 1951 and the
+2000-2004 average after 2004 (the only composition we can carry into years with no EPUF;
+the TR has no sex/age breakdown). This matters because the composition shifted hard --
+women were 34% of earners in 1951 vs 48% in 2004 -- so forcing the 2000-04 mix onto the
+early years (the old design) over-weighted women and misfit the in-sample aggregate.
+Because comp sums to 1, the model's worker TOTAL equals the TR's every year and model / TR
+is a pure comparison of taxable earnings PER WORKER: the extrapolated distribution vs SSA's
 wage assumptions. The taxable maximum caps every mean: the EPUF top-code (1951-2006),
 $3,000 before, and AWI-indexed off 2006 forward (taxmax(y) = taxmax(2006) * AWI(y)/AWI(2006)).
 
-A control overlays the iterated (pre-extrapolation) params under the model's TRUE
-per-year EPUF composition, in-sample -- so any in-sample model/benchmark gap splits into
-the fixed-composition cost (control vs model) and the distribution-shape fit (control vs ASS).
+A dashed diagnostic overlays the OLD fixed-2000-04-composition aggregate, so the in-sample
+gain from using observed composition is visible directly.
 
   python code/cross_sections/plot_aggregate_taxable_extrapolated.py
     -> output/cross_sections/aggregate_taxable_extrapolated.pdf (+ .png)
@@ -42,12 +52,13 @@ import crosssec_fit as cf
 from plot_aggregate_taxable import model_mean_taxable   # reuse E[min(exp Y, taxmax)]
 
 PARAMS = Path("output/cross_sections/cross_section_params_extrapolated.csv")
-ITER   = Path("output/cross_sections/cross_section_params_iterated.csv")
 TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
 DB      = cf.DB
 MUSD    = 1e6
 TAXMAX_1937_50 = 3000.0
-ANCHOR = (2000, 2004)
+ANCHOR = (2000, 2004)     # forward composition: fixed at this window (last observed edge)
+BACK   = (1951, 1955)     # pre-1951 composition: fixed at the earliest observed edge
+DATA_LAST = 2004          # observed per-year composition used through here; fixed after
 
 
 def _duck(q):
@@ -89,6 +100,24 @@ def taxmax_series(years, awi):
     return tm
 
 
+def epuf_direct():
+    """Raw EPUF empirical aggregate taxable earnings ($M) per year = 100 x SUM(earnings)
+    over positive earners (1% sample -> population; earnings are already top-coded at the
+    taxable max, so their sum IS taxable earnings). The observed benchmark from microdata."""
+    out = _duck("COPY (SELECT year, 100*SUM(earnings)/1e6 FROM annual WHERE earnings>0 "
+                "GROUP BY year) TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);")
+    return {int(y): float(v) for y, v in (l.split(",") for l in out.strip().splitlines())}
+
+
+def combined_benchmark(ass, trpay):
+    """One spliced published/projected series: ASS Table 4.B1 where it exists (1937-2007),
+    the TR 2023 taxable-payroll projection afterward. Returns (benchmark, last ASS year)."""
+    ass_last = max(ass)
+    B = dict(trpay)
+    B.update(ass)                    # ASS overrides TR in the overlap (1970-2007)
+    return B, ass_last
+
+
 def epuf_counts():
     """Positive-earner counts by (year, sex, single-year age), 1951-2006."""
     q = ("COPY (SELECT a.year, d.sex, (a.year-d.yob) AS age, COUNT(*) AS n "
@@ -99,22 +128,40 @@ def epuf_counts():
     return pd.read_csv(io.StringIO(_duck(q)))
 
 
-def fixed_composition(counts):
-    """The 2000-2004 joint (sex, age) share of positive earners -- one composition for
-    all years (the fixed gender ratio x age profile). Sums to 1 over cells."""
-    w = counts[(counts.year >= ANCHOR[0]) & (counts.year <= ANCHOR[1])]
+def joint_share(counts, y0, y1):
+    """The (sex, age) joint share of positive earners averaged over [y0, y1]. Sums to 1."""
+    w = counts[(counts.year >= y0) & (counts.year <= y1)]
     tot = w["n"].sum()
     return {(int(r.sex), int(r.age)): r.n / tot for r in
             w.groupby(["sex", "age"], as_index=False)["n"].sum().itertuples()}
 
 
 def per_year_shares(counts):
-    """True per-year (sex, age) share -- for the in-sample control weighting."""
+    """True per-year (sex, age) share -- the observed in-sample composition."""
     sh = {}
     for y, g in counts.groupby("year"):
         tot = g["n"].sum()
         sh[int(y)] = {(int(r.sex), int(r.age)): r.n / tot for r in g.itertuples()}
     return sh
+
+
+def composition_by_year(counts, years):
+    """Per-year (sex, age) composition for the model: the OBSERVED EPUF share each year
+    over 1951-DATA_LAST, held fixed at the 1951-1955 average before 1951 and at the
+    2000-2004 average after DATA_LAST (the two data edges we can carry off-sample).
+    Returns (comp_by_year, back_share, fwd_share)."""
+    back = joint_share(counts, *BACK)          # pre-1951 fallback (earliest observed edge)
+    fwd  = joint_share(counts, *ANCHOR)        # post-2004 fallback (latest observed edge)
+    per  = per_year_shares(counts)
+    comp = {}
+    for y in years:
+        if y <= BACK[0] - 1:
+            comp[y] = back
+        elif y <= DATA_LAST:
+            comp[y] = per.get(y, fwd)          # observed composition, verbatim
+        else:
+            comp[y] = fwd
+    return comp, back, fwd
 
 
 def model_means(params, taxmax):
@@ -141,14 +188,15 @@ def agg_fixed(means, taxmax, comp, cov):
     return agg
 
 
-def agg_peryear(means, taxmax, shares, cov):
-    """Aggregate taxable ($M) with the true per-year EPUF composition x TR workers(y)."""
+def agg_composed(means, taxmax, comp_by_year, cov):
+    """Aggregate taxable ($M) with a per-year (sex, age) composition x TR workers(y)."""
     agg = {}
     for y in taxmax:
-        if y not in shares:
+        comp = comp_by_year.get(y)
+        if comp is None or y not in cov:
             continue
         s = 0.0
-        for (sex, age), frac in shares[y].items():
+        for (sex, age), frac in comp.items():
             mt = means.get((y, sex, age))
             if mt is not None and np.isfinite(mt):
                 s += mt * cov[y] * frac
@@ -162,65 +210,61 @@ def main():
     years = sorted(set(df["year"]) & set(cov))          # model x TR-covered-workers overlap
     taxmax = taxmax_series(years, awi)
     counts = epuf_counts()
-    comp = fixed_composition(counts)
-    shares = per_year_shares(counts)
-    y_lo, y_hi = min(shares), max(shares)
+    comp_by_year, back, fwd = composition_by_year(counts, years)
+    y_lo, y_hi = BACK[0], DATA_LAST                      # observed-composition window
 
-    model = agg_fixed(model_means(PARAMS, taxmax), taxmax, comp, cov)
-    fit_tm = {y: taxmax[y] for y in taxmax if y_lo <= y <= y_hi}
-    control = agg_peryear(model_means(ITER, fit_tm), fit_tm, shares, cov)   # in-sample control
+    means = model_means(PARAMS, taxmax)
+    model = agg_composed(means, taxmax, comp_by_year, cov)   # observed comp in-sample, fixed off-sample
 
     out = _duck("COPY (SELECT year, reported_taxable_musd FROM supplement_4b1 "
                 "WHERE reported_taxable_musd IS NOT NULL) TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);")
     ass = {int(y): float(v) for y, v in (l.split(",") for l in out.strip().splitlines())}
+    bench, ass_last = combined_benchmark(ass, trpay)        # ASS pre-2008, TR after
+    epuf = epuf_direct()                                    # raw 1% microdata aggregate
 
     yr = np.array(years)
     m = np.array([model[y] for y in years])
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.5, 5.4))
 
     # ---- levels (log y, trillions) ----
-    ass_y = sorted(ass); tr_y = sorted(trpay)
-    ax1.plot(ass_y, [ass[y] / 1e6 for y in ass_y], color="k", lw=2.0,
-             label="ASS Table 4.B1 (published)")
-    ax1.plot(tr_y, [trpay[y] / 1e6 for y in tr_y], color="C2", lw=2.0,
-             label="TR 2023 taxable payroll (intermediate)")
-    ax1.plot(yr, m / 1e6, color="C3", lw=1.7, ls=":", label="extrapolated model")
-    fy = sorted(control)
-    ax1.plot(fy, [control[y] / 1e6 for y in fy], color="C1", lw=1.3,
-             label="iterated control (true composition)")
+    by = sorted(bench); ey = sorted(epuf)
+    ax1.plot(by, [bench[y] / 1e6 for y in by], color="k", lw=2.2,
+             label=f"benchmark: ASS 4.B1 (≤2007) + TR 2023 (after)")
+    ax1.plot(ey, [epuf[y] / 1e6 for y in ey], color="C0", lw=1.4, marker="o", ms=2.5,
+             label="EPUF (raw 1% microdata ×100)")
+    ax1.plot(yr, m / 1e6, color="C3", lw=1.9, ls=":", label="extrapolated model")
     ax1.axvspan(y_lo, y_hi, color="grey", alpha=0.08)
-    ax1.axvline(ANCHOR[1], color="grey", lw=0.8, ls="--")
+    ax1.axvline(ass_last, color="grey", lw=0.8, ls="--")
     ax1.set_yscale("log"); ax1.set_ylabel("aggregate taxable earnings ($ trillions)")
     ax1.set_xlabel("year"); ax1.set_title("Levels (log scale)")
     ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     ax1.legend(frameon=False, fontsize=8.5, loc="upper left")
 
-    # ---- ratio to each benchmark ----
+    # ---- ratio to the combined benchmark ----
     ax2.axhline(1.0, color="k", lw=1.0)
-    xa = [y for y in years if y in ass]; ra = [model[y] / ass[y] for y in xa]
-    xt = [y for y in years if y in trpay]; rt = [model[y] / trpay[y] for y in xt]
-    ax2.plot(xa, ra, color="k", lw=1.8, marker="o", ms=2.5, label="model / ASS")
-    ax2.plot(xt, rt, color="C2", lw=1.8, marker="s", ms=2.5, label="model / TR")
-    fcx = [y for y in fy if y in ass]; fc = [control[y] / ass[y] for y in fcx]
-    ax2.plot(fcx, fc, color="C1", lw=1.3, label="control / ASS (true composition)")
-    ax2.axvspan(y_lo, y_hi, color="grey", alpha=0.08, label="EPUF data years")
-    ax2.axvline(ANCHOR[1], color="grey", lw=0.8, ls="--")
-    ax2.set_ylabel("model / published benchmark"); ax2.set_xlabel("year")
+    xe = [y for y in ey if y in bench]; re = [epuf[y] / bench[y] for y in xe]
+    xm = [y for y in years if y in bench]; rm = [model[y] / bench[y] for y in xm]
+    ax2.plot(xe, re, color="C0", lw=1.6, marker="o", ms=2.5, label="EPUF / benchmark")
+    ax2.plot(xm, rm, color="C3", lw=1.8, ls=":", label="model / benchmark")
+    ax2.axvspan(y_lo, y_hi, color="grey", alpha=0.08, label="observed-composition years")
+    ax2.axvline(ass_last, color="grey", lw=0.8, ls="--")
+    ax2.set_ylabel("series / combined benchmark"); ax2.set_xlabel("year")
     ax2.set_title("Relative to benchmark (1.0 = exact)")
     ax2.legend(frameon=False, fontsize=8.5, loc="best")
 
-    fig.suptitle("Aggregate taxable earnings: extrapolated model vs ASS 4.B1 vs Trustees Report 2023",
+    fig.suptitle("Aggregate taxable earnings: EPUF & extrapolated model vs combined ASS+TR benchmark",
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     outp = "output/cross_sections/aggregate_taxable_extrapolated"
     fig.savefig(outp + ".pdf"); fig.savefig(outp + ".png", dpi=150); plt.close(fig)
 
-    print(f"{'year':>4} {'model($M)':>13} {'ASS($M)':>13} {'TR($M)':>13} {'m/ASS':>6} {'m/TR':>6}")
+    print(f"{'year':>4} {'model($M)':>13} {'EPUF($M)':>13} {'bench($M)':>13} "
+          f"{'mdl/bn':>7} {'epf/bn':>7}")
     for y in years:
-        if y % 10 == 0 or y in (years[0], years[-1], 2004, 2007):
-            a = ass.get(y); t = trpay.get(y)
-            print(f"{y:>4} {model[y]:>13,.0f} {a if a else 0:>13,.0f} {t if t else 0:>13,.0f} "
-                  f"{model[y]/a if a else 0:>6.3f} {model[y]/t if t else 0:>6.3f}")
+        if y % 10 == 0 or y in (years[0], years[-1], 2004, 2006, ass_last):
+            e = epuf.get(y); b = bench.get(y)
+            print(f"{y:>4} {model[y]:>13,.0f} {e if e else 0:>13,.0f} {b if b else 0:>13,.0f} "
+                  f"{model[y]/b if b else 0:>7.3f} {e/b if (e and b) else 0:>7.3f}")
     print(f"\nwrote {outp}.pdf and .png")
 
 
