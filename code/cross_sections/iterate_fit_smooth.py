@@ -34,7 +34,26 @@ alpha (huge v_c, no real variation) s^2 -> 0, lam -> large, alpha snaps to the l
 (tiny v_c, real age-cohort structure) s^2 > 0, small lam, nu follows the data. (Medians for
 robustness to the unrepaired spikes.) This folds stage-2 smoothing into the estimation.
 
-  python code/cross_sections/iterate_fit_smooth.py [--outer T] [--window W] [--jobs N]
+FINAL PASS -- aggregate-mean moment match (moment_match, on by default; --no-moment skips).
+Both the raw MLE and the smoothed likelihood are BLIND to the earnings mass above the taxable
+cap: under a tight maximum ~40-45% of older men are top-coded and the censored likelihood fits
+a heavy dPlN upper tail (alpha<=1, an INFINITE uncapped mean) to explain the pile-up. So after
+smoothing converges we pin the ONE quantity the cap censors -- the mean -- to the published ASS
+uncapped average earnings per worker (aggearn_tot / num_wrk). Per year we solve a single
+multiplier eta so the composition-weighted model E[X] over men+women 15-77 hits that mean,
+refitting each men cell FULL-vector via the penalized objective  negll(theta) + Sum_p lam_p
+(theta_p - line_p)^2 + eta*w*E[X](theta)  (fit_dpln_mean in crosssec_fit). All of alpha, beta,
+nu, tau move together, so the body re-optimizes to compensate as the tail thins -- the mean
+match costs little likelihood, where freezing the body and pushing alpha alone is far more
+expensive (measured ~15x the negll cost). Women's mixture mean is finite and enters as a fixed
+offset; men's tails absorb the aggregate, and because the pull is a shared eta against each
+cell's own likelihood curvature, the correction is INFORMATION-ROUTED -- well-identified cells
+barely move, censored flat-ridge cells take it. eta>=0 only THINS an over-heavy tail (never
+fattens), and eta=0 where the model already doesn't overshoot (the high-cap years), so it
+self-limits to the tight-cap era. This makes stage 1.5 depend on the ASS workbook. Output gains
+alpha_premoment (pre-match alpha) and eta_mean (the year's multiplier).
+
+  python code/cross_sections/iterate_fit_smooth.py [--outer T] [--window W] [--jobs N] [--no-moment]
     -> output/cross_sections/cross_section_params_iterated.csv
 """
 import os
@@ -59,6 +78,8 @@ import estimate_cross_sections as ec
 
 IN         = Path("output/cross_sections/cross_section_params.csv")
 OUT        = Path("output/cross_sections/cross_section_params_iterated.csv")
+ASS_XLSX   = Path("raw_data/annual_statistical_supplement.xlsx")   # uncapped-mean benchmark
+MATCH_AGES = (15, 77)  # cells entering the aggregate-mean moment (matches the validation window)
 MAX_OUTER  = 6        # EM-style passes; breaks early once no cell moves
 WINDOW     = 5        # neighbour line + warm-start reach: +/- this many years (age & cohort)
 MIDPOINT   = 45       # warm-start toward the core: older donors below it, younger above
@@ -172,7 +193,138 @@ def _refit_year(args):
     return year, rows, n_moved
 
 
-def main(outer=MAX_OUTER, window=WINDOW, jobs=None):
+def ass_uncapped_target():
+    """ASS average UNCAPPED earnings per covered worker ($/worker) per year: (aggearn_tot_wage
+    + aggearn_tot_se) / num_wrk, annual 1937-2022. This is the published mean the censored MLE
+    can't see (the mass above the cap), and the target the moment match pins the model to. Same
+    definition as ass_unc in plot_aggregate_taxable_extrapolated, so the fit hits what's judged."""
+    d = pd.read_excel(ASS_XLSX, sheet_name="data")
+    tot = d["aggearn_tot_wage"].fillna(0) + d["aggearn_tot_se"].fillna(0)   # $M
+    out = {}
+    for y, t, nw in zip(d["year"], tot, d["num_wrk"]):
+        if t > 0 and pd.notna(nw) and nw > 0:
+            out[int(y)] = float(t) * 1e6 / (float(nw) * 1e3)               # $ per worker
+    return out
+
+
+def _match_year(args):
+    """Solve one year's aggregate-mean moment: find the single eta so the composition-weighted
+    model uncapped mean E[X] over men+women 15-77 equals the ASS target, refitting each men cell
+    FULL-vector (alpha, beta, nu, tau together) under the penalized objective, so the body
+    compensates as the tail thins. Women's mixture mean is finite -> the fixed offset S_women.
+    Returns {age: (alpha, beta, nu, tau)}, the year's eta, and the negll change summed over men
+    (>=0, the fit cost of the match). eta=0 (no change) when the model does not overshoot -- the
+    correction only ever THINS an over-heavy censored tail, never fattens."""
+    year, men_cells, S_women, target_unc, lam = args
+    dfy = ec.load_year(year)
+    highc = float(dfy["earnings"].max()) - cf.HIGH_MARGIN
+    xby = {a: sub["earnings"].to_numpy(dtype=float)
+           for a, sub in dfy.loc[dfy["sex"] == 1].groupby("age")}
+    cells = []                          # (age, x, start_theta, line_theta, w, negll0)
+    for age, theta, line, w in men_cells:
+        x = xby.get(age)
+        if x is None or x.size < ec.MIN_N:
+            continue
+        th = np.asarray(theta, float)
+        negll0 = cf.dpln_negll(x, cf.LOWC, highc, np.exp(th[0]), np.exp(th[1]), th[2], np.exp(th[3]))
+        cells.append((age, x, th, np.asarray(line, float), w, negll0))
+    if not cells:
+        return year, {}, 0.0, 0.0
+
+    def solve(eta):                     # refit every men cell at this eta; weighted mean + fits
+        fits = {}
+        M = 0.0
+        for age, x, theta, line, w, _n0 in cells:
+            a, b, nu, tau, nll = cf.fit_dpln_mean(x, cf.LOWC, highc, theta, line, lam, eta, w)
+            fits[age] = (a, b, nu, tau, nll)
+            M += w * cf.dpln_mean(a, b, nu, tau)
+        return fits, M
+
+    T_men = target_unc - S_women        # men's share of the target weighted-mean
+    f0, M0 = solve(0.0)
+    if T_men <= 0 or not np.isfinite(M0) or M0 <= T_men:
+        return year, {a: f[:4] for a, f in f0.items()}, 0.0, \
+               sum(f0[c[0]][4] - c[5] for c in cells)
+    lo, hi = 0.0, 1e-3
+    for _ in range(60):                 # grow the bracket until the mean undershoots the target
+        if solve(hi)[1] < T_men or hi > 1e8:
+            break
+        hi *= 10.0
+    for _ in range(40):                 # bisection on the monotone (decreasing) mean(eta)
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if solve(mid)[1] > T_men else (lo, mid)
+    eta = 0.5 * (lo + hi)
+    fits, _ = solve(eta)
+    dnll = sum(fits[c[0]][4] - c[5] for c in cells)   # negll increase vs the smooth fit
+    return year, {a: f[:4] for a, f in fits.items()}, eta, dnll
+
+
+def moment_match(df, jobs=None):
+    """Final stage-1.5 pass: bend each year's men cells so the composition-weighted model
+    uncapped mean matches the ASS published mean, via the FULL-vector penalized fit in
+    fit_dpln_mean (likelihood + smoothness + the shared per-year moment). All of alpha, beta,
+    nu, tau move so the body compensates as the tail thins; women are held at their finite fit;
+    the correction is information-routed to the censored cells. Adds alpha_premoment (the
+    pre-match alpha) and eta_mean (the year's multiplier) for diagnostics, and reports the total
+    negll cost so any fit loss is visible."""
+    line, lam = lines_and_lambdas(df)
+    lam_men = lam[1]                                 # per-param precision, dPlN theta order
+    target = ass_uncapped_target()
+    lo_age, hi_age = MATCH_AGES
+
+    tasks = []
+    for y, g in df.groupby("year"):
+        y = int(y)
+        if y not in target:
+            continue
+        gg = g[(g["age"] >= lo_age) & (g["age"] <= hi_age)]
+        ntot = float(gg["n"].sum())
+        if ntot <= 0:
+            continue
+        wom = gg[gg["sex"] == 2]
+        s_women = float(sum((r["n"] / ntot) *
+                            cf.mix_mean(r["mu1"], r["mu2"], r["sig1"], r["sig2"], r["w"])
+                            for r in wom.to_dict("records")))
+        men_cells = [(int(r["age"]), cf.dpln_theta(r),
+                      list(line[(1, int(r["year"] - r["age"]), int(r["age"]))]),
+                      float(r["n"] / ntot))
+                     for r in gg[gg["sex"] == 1].to_dict("records")]
+        tasks.append((y, men_cells, s_women, float(target[y]), lam_men))
+
+    results = {}
+    with ProcessPoolExecutor(max_workers=jobs) as ex:
+        futs = {ex.submit(_match_year, t): t[0] for t in tasks}
+        for fut in as_completed(futs):
+            y, fits, eta, dnll = fut.result()
+            results[y] = (fits, eta, dnll)
+
+    df = df.copy()
+    df["alpha_premoment"] = df["alpha"]
+    df["eta_mean"] = 0.0
+    idx = {(int(r.year), int(r.sex), int(r.age)): i for i, r in df.iterrows()}
+    n_moved, tot_dnll = 0, 0.0
+    for y, (fits, eta, dnll) in results.items():
+        df.loc[df["year"] == y, "eta_mean"] = eta
+        tot_dnll += dnll
+        for age, (a, b, nu, tau) in fits.items():
+            i = idx[(y, 1, age)]
+            if abs(a - df.at[i, "alpha"]) > MOVE_TOL:
+                n_moved += 1
+            df.at[i, "alpha"], df.at[i, "beta"], df.at[i, "nu"], df.at[i, "tau"] = a, b, nu, tau
+    # refresh men's censoring diagnostics at the new params (cheap, keeps the CSV self-consistent)
+    for i, r in df[df["sex"] == 1].iterrows():
+        tlo, thi = np.log(r["lowc"]), np.log(r["highc"])
+        df.at[i, "p_low_model"]  = float(cf.nl_cdf(tlo, r["alpha"], r["beta"], r["nu"], r["tau"]))
+        df.at[i, "p_high_model"] = float(1 - cf.nl_cdf(thi, r["alpha"], r["beta"], r["nu"], r["tau"]))
+    etas = {y: e for y, (_f, e, _d) in results.items() if e > 0}
+    print(f"moment match: {n_moved} men cells moved across {len(etas)} years (eta>0); "
+          f"eta range [{min(etas.values(), default=0):.3g}, {max(etas.values(), default=0):.3g}]; "
+          f"total negll cost {tot_dnll:,.0f} over {n_moved} cells "
+          f"({tot_dnll / max(n_moved,1):.1f}/cell)", flush=True)
+    return df
+
+
+def main(outer=MAX_OUTER, window=WINDOW, jobs=None, moment=True):
     df = pd.read_csv(IN)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     # lambda is estimated ONCE from the raw fits and held fixed: re-estimating it from the
@@ -209,8 +361,15 @@ def main(outer=MAX_OUTER, window=WINDOW, jobs=None):
         if moved == 0:
             break
 
-    df[ec.COLS].to_csv(OUT, index=False)
-    print(f"\nwrote {len(df)} penalized rows -> {OUT}  (window={window})")
+    # final pass: pin each year's men alpha to the ASS uncapped mean (penalized profile-on-alpha),
+    # correcting the censored upper-tail that the smoothed likelihood alone leaves too heavy.
+    out_cols = ec.COLS
+    if moment:
+        df = moment_match(df, jobs)
+        out_cols = ec.COLS + ["alpha_premoment", "eta_mean"]
+
+    df[out_cols].to_csv(OUT, index=False)
+    print(f"\nwrote {len(df)} penalized rows -> {OUT}  (window={window}, moment={moment})")
 
 
 if __name__ == "__main__":
@@ -219,4 +378,6 @@ if __name__ == "__main__":
                             ("--jobs", "jobs", int)]:
         if flag in sys.argv:
             kw[key] = cast(sys.argv[sys.argv.index(flag) + 1])
+    if "--no-moment" in sys.argv:          # skip the ASS uncapped-mean match (pure smoothing)
+        kw["moment"] = False
     main(**kw)

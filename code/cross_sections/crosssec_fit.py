@@ -168,6 +168,63 @@ def fit_dpln(x, lowc, highc, start=None, penalty=None):
                 p_high_model=float(1 - nl_cdf(thi, a, b, nu, tau)))
 
 
+# ---------------------------------------- dPlN uncapped mean + profiled-alpha match
+def dpln_mean(a, b, nu, tau):
+    """Analytic UNCAPPED mean E[X] of the dPlN (no cap). INFINITE where the upper Pareto
+    index a<=1 -- the censored-MLE heavy-tail pathology under a tight taxable maximum."""
+    if not (a > 1.0):
+        return np.inf
+    return np.exp(nu + tau * tau / 2.0) * (a * b) / ((a - 1.0) * (b + 1.0))
+
+
+def dpln_negll(x, lowc, highc, a, b, nu, tau):
+    """Doubly-censored dPlN negative log-likelihood at a given parameter vector -- the pure
+    fit measure (no penalties), used to price the fit cost of the mean-moment match."""
+    yi, n_low, n_high = censor_split(x, lowc, highc)
+    tlo, thi = np.log(lowc), np.log(highc)
+    ll = (nl_logpdf(yi, a, b, nu, tau).sum()
+          + n_low  * np.log(nl_cdf(tlo, a, b, nu, tau))
+          + n_high * np.log1p(-nl_cdf(thi, a, b, nu, tau)))
+    return float(-ll) if np.isfinite(ll) else 1e18
+
+
+def fit_dpln_mean(x, lowc, highc, start, line, lam, eta, w, amin=1.0 + 1e-3):
+    """FULL-vector penalized fit of one dPlN cell under a mean moment. Minimizes
+
+        negll(theta)  +  Sum_p lam_p (theta_p - line_p)^2  +  eta * w * E[X](theta),
+
+    theta = [logα, logβ, ν, logτ]. The three terms are the censored likelihood, the stage-1.5
+    smoothness prior (line = neighbour-line theta, lam = its REML precision), and the aggregate-
+    mean moment (eta shared across a year's cells, w the cell's worker weight). ALL FOUR params
+    move, so the body (ν, τ, β) re-optimizes to compensate as the tail thins -- the mean match
+    costs little likelihood, unlike freezing the body and pushing alpha alone. eta trades tail
+    weight for mean; against each cell's own curvature the pull is information-routed (identified
+    cells barely move, the censored flat-ridge alpha absorbs it). logα is bounded so alpha>amin,
+    keeping E[X] finite. Returns (alpha, beta, nu, tau, negll_pure) -- negll at the optimum,
+    WITHOUT the penalties, so fit loss vs the unconstrained smooth fit is measurable."""
+    yi, n_low, n_high = censor_split(x, lowc, highc)
+    tlo, thi = np.log(lowc), np.log(highc)
+    line, lam = np.asarray(line, float), np.asarray(lam, float)
+
+    def negll(theta):
+        a, b, nu, tau = np.exp(theta[0]), np.exp(theta[1]), theta[2], np.exp(theta[3])
+        ll = (nl_logpdf(yi, a, b, nu, tau).sum()
+              + n_low  * np.log(nl_cdf(tlo, a, b, nu, tau))
+              + n_high * np.log1p(-nl_cdf(thi, a, b, nu, tau)))
+        return -ll if np.isfinite(ll) else 1e18
+
+    def obj(theta):
+        m = dpln_mean(np.exp(theta[0]), np.exp(theta[1]), theta[2], np.exp(theta[3]))
+        if not np.isfinite(m):
+            return 1e18
+        return negll(theta) + float(np.dot(lam, (theta - line) ** 2)) + eta * w * m
+
+    bnds = [(np.log(amin), None), (None, None), (None, None), (None, None)]
+    res = minimize(obj, np.asarray(start, float), method="L-BFGS-B", bounds=bnds)
+    a, b, nu, tau = np.exp(res.x[0]), np.exp(res.x[1]), res.x[2], np.exp(res.x[3])
+    return a, b, nu, tau, float(negll(res.x))
+
+
 # --------------------------------------------------- lognormal mixture (women)
 def _unpack(theta):                 # (mu1, mu2, log sig1, log sig2, logit w)
     mu1, mu2, ls1, ls2, lw = theta
@@ -200,6 +257,12 @@ def mix_theta(r):                   # pack a fitted mixture result into a warm-s
     s2 = max(r["sig2"] - SIG_FLOOR, 1e-6)
     w = min(max(r["w"], 1e-6), 1 - 1e-6)
     return [r["mu1"], r["mu2"], np.log(s1), np.log(s2), np.log(w / (1 - w))]
+
+
+def mix_mean(mu1, mu2, s1, s2, w):
+    """Analytic UNCAPPED mean of the two-component lognormal mixture -- always finite, so the
+    women's cells need no tail correction; they enter the moment match as a fixed offset."""
+    return w * np.exp(mu1 + s1 * s1 / 2.0) + (1 - w) * np.exp(mu2 + s2 * s2 / 2.0)
 
 
 def fit_mixture(x, lowc, highc, start=None, penalty=None):
