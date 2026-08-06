@@ -21,6 +21,10 @@ DB          = "processed_data/ssa.duckdb"
 LOWC        = 200.0     # left-censoring threshold ($), fixed across years
 HIGH_MARGIN = 1000.0    # HIGHC = taxmax(year) - this; absorbs the near-cap collapse spike
 SIG_FLOOR   = 0.02      # guard against the mixture sigma->0 likelihood degeneracy
+SIG_MIN     = 0.20      # lower bound on each mixture sigma: stops a component collapsing onto
+                        # a data-heaping spike (a round-earnings pile-up in sparse pre-1980
+                        # retirement cells) -- the source of the sigma1/w basin ambiguity.
+                        # Only ~1% of cells (all at the age extremes) ever push against it.
 LOG2PI      = np.log(2 * np.pi)
 SQRT2, SQRT_HALF_PI = np.sqrt(2.0), np.sqrt(np.pi / 2.0)
 
@@ -109,13 +113,20 @@ def dpln_theta(r):                  # pack a fitted dPlN result into a warm-star
     return [np.log(r["alpha"]), np.log(r["beta"]), r["nu"], np.log(r["tau"])]
 
 
-def fit_dpln(x, lowc, highc, start=None):
+def fit_dpln(x, lowc, highc, start=None, penalty=None):
     """Fit the dPlN by censored MLE. `start` (a theta from dpln_theta) warm-starts
     the optimizer from a neighbouring cell as a single local solve; None runs a
     small multi-start -- the moment start plus a low- and a high-alpha seed that
     straddle the two basins of the weakly-identified upper tail -- and keeps the
     best. (Under heavy censoring the tail is nearly flat, so a single start can
-    converge to a worse local optimum; the seeds pin down the better basin.)"""
+    converge to a worse local optimum; the seeds pin down the better basin.)
+
+    `penalty=(target, lam)` adds a per-parameter quadratic Sum lam_i (theta_i -
+    target_i)^2 (theta = [logα,logβ,ν,logτ]) to the objective -- the smoothness
+    prior that keeps a weakly-identified parameter (the flat-ridge upper tail) on
+    the neighbour line instead of being driven to a copied neighbour value by bare
+    keep-best. `negll`/`info_*` stay the PURE likelihood; `obj` is the penalized
+    value used for keep-best across warm starts."""
     yi, n_low, n_high = censor_split(x, lowc, highc)
     tlo, thi = np.log(lowc), np.log(highc)
 
@@ -125,6 +136,13 @@ def fit_dpln(x, lowc, highc, start=None):
               + n_low  * np.log(nl_cdf(tlo, a, b, nu, tau))
               + n_high * np.log1p(-nl_cdf(thi, a, b, nu, tau)))
         return -ll if np.isfinite(ll) else 1e18
+
+    if penalty is None:
+        obj = negll
+    else:
+        t_t, lam = np.asarray(penalty[0], float), np.asarray(penalty[1], float)
+        def obj(theta):
+            return negll(theta) + float(np.dot(lam, (np.asarray(theta) - t_t) ** 2))
 
     if start is not None:
         seeds = [start]
@@ -136,13 +154,13 @@ def fit_dpln(x, lowc, highc, start=None):
                  [np.log(30.0), 0.0, m, np.log(s)]]             # high-alpha ridge
     res = None
     for seed in seeds:
-        r = minimize(negll, seed, method="L-BFGS-B")
+        r = minimize(obj, seed, method="L-BFGS-B")
         if res is None or r.fun < res.fun:
             res = r
     a, b, nu, tau = np.exp(res.x[0]), np.exp(res.x[1]), res.x[2], np.exp(res.x[3])
     hd = _hess_diag(negll, res.x)                          # info in theta=[logα,logβ,ν,logτ]
     return dict(model="dpln", n=x.size, n_low=n_low, n_high=n_high,
-                negll=float(res.fun), converged=bool(res.success),
+                negll=float(negll(res.x)), obj=float(res.fun), converged=bool(res.success),
                 alpha=a, beta=b, nu=nu, tau=tau,
                 info_alpha=float(hd[0]), info_beta=float(hd[1]),
                 info_nu=float(hd[2]), info_tau=float(hd[3]),
@@ -184,10 +202,16 @@ def mix_theta(r):                   # pack a fitted mixture result into a warm-s
     return [r["mu1"], r["mu2"], np.log(s1), np.log(s2), np.log(w / (1 - w))]
 
 
-def fit_mixture(x, lowc, highc, start=None):
+def fit_mixture(x, lowc, highc, start=None, penalty=None):
     """Fit the lognormal mixture by censored MLE. `start` (a theta from mix_theta)
     warm-starts from a neighbouring cell as a single local optimisation; None runs
-    the deterministic 6-point restart grid."""
+    the deterministic 6-point restart grid.
+
+    `penalty=(target, lam)` adds Sum lam_i (theta_i - target_i)^2 (theta =
+    [μ1,μ2,logσ1',logσ2',logit w]) to the objective -- the smoothness prior toward
+    the neighbour line. `negll`/`info_*` stay the PURE likelihood; `obj` is the
+    penalized value for keep-best. The target is in the mean-ordered convention
+    (component 1 = higher mean), matching the relabelling below."""
     yi, n_low, n_high = censor_split(x, lowc, highc)
     tlo, thi = np.log(lowc), np.log(highc)
 
@@ -198,8 +222,21 @@ def fit_mixture(x, lowc, highc, start=None):
               + n_high * np.log(mix_sf(thi, *p)))
         return -ll if np.isfinite(ll) else 1e18
 
+    if penalty is None:
+        obj = negll
+    else:
+        t_t, lam = np.asarray(penalty[0], float), np.asarray(penalty[1], float)
+        def obj(theta):
+            return negll(theta) + float(np.dot(lam, (np.asarray(theta) - t_t) ** 2))
+
+    # bound each log-sigma theta so sigma = SIG_FLOOR + exp(ls) >= SIG_MIN: forbids the
+    # heaping-spike basin without touching the ~99% of cells that sit well above the floor.
+    lo = np.log(SIG_MIN - SIG_FLOOR)
+    bnds = [(4.0, 13.0), (4.0, 13.0), (lo, None), (lo, None), (None, None)]  # mu in a sane
+    #   log-earnings range so a near-empty minority component can't run off to +/-100; then
+    #   its info -> 0 and the stage-1.5 penalty cleanly pulls it onto the neighbour line.
     if start is not None:
-        best = minimize(negll, start, method="L-BFGS-B")
+        best = minimize(obj, start, method="L-BFGS-B", bounds=bnds)
     else:
         # deterministic restarts: vary weight and component separation about the interior mean
         m, s = yi.mean(), yi.std()
@@ -208,7 +245,7 @@ def fit_mixture(x, lowc, highc, start=None):
         for w0 in (0.3, 0.5, 0.7):
             for d in (0.4, 0.9):
                 theta0 = [m + d * s, m - d * s, ls, ls, np.log(w0 / (1 - w0))]
-                res = minimize(negll, theta0, method="L-BFGS-B")
+                res = minimize(obj, theta0, method="L-BFGS-B", bounds=bnds)
                 if best is None or res.fun < best.fun:
                     best = res
 
@@ -219,7 +256,7 @@ def fit_mixture(x, lowc, highc, start=None):
         hd = hd[[1, 0, 3, 2, 4]]        # keep info aligned with the relabelled params
     p = (mu1, mu2, s1, s2, w)
     return dict(model="mixture", n=x.size, n_low=n_low, n_high=n_high,
-                negll=float(best.fun), converged=bool(best.success),
+                negll=float(negll(best.x)), obj=float(best.fun), converged=bool(best.success),
                 mu1=mu1, mu2=mu2, sig1=s1, sig2=s2, w=w,
                 info_mu1=float(hd[0]), info_mu2=float(hd[1]), info_sig1=float(hd[2]),
                 info_sig2=float(hd[3]), info_w=float(hd[4]),

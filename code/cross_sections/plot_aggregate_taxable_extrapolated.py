@@ -1,0 +1,204 @@
+#!/usr/bin/env python
+"""Aggregate taxable earnings implied by the EXTRAPOLATED parameter surfaces, 1945-2099,
+against the two published benchmarks: ASS Table 4.B1 (1937-2007) and the 2023 OASDI
+Trustees Report intermediate projection (Taxable Payroll, 1970-2099). Together the two
+benchmarks span the whole target range and agree to <2.5% where they overlap.
+
+This isolates what the model actually determines -- the SHAPE of the earnings distribution,
+hence mean taxable earnings per covered worker -- from what it does not (how many workers
+there are). So the per-cell population weight is taken from the Trustees Report itself:
+
+    workers(sex, age, year) = TR covered workers(year)  x  EPUF age-sex share(sex, age)
+
+The EPUF share is the empirical composition of positive earners by (sex, single-year age),
+per year 1951-2006, HELD at the 1951 / 2006 edge outside that window (the one out-of-sample
+assumption -- it ignores projected population aging, which would tilt weight toward lower-
+earning older ages). By construction the model's worker TOTAL equals the TR's each year, so
+model / TR is purely a comparison of taxable earnings PER WORKER: the extrapolated
+distribution vs SSA's wage assumptions. The taxable maximum caps every mean; historically it
+is the EPUF top-code (1951-2006) and $3,000 before, and forward it is indexed by the TR
+Average Wage Index (taxmax(y) = taxmax(2006) * AWI(y)/AWI(2006)), exactly as SSA sets it.
+
+  python code/cross_sections/plot_aggregate_taxable_extrapolated.py
+    -> output/cross_sections/aggregate_taxable_extrapolated.pdf (+ .png)
+"""
+import io
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "code/cross_sections")   # run from project root, per repo convention
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+import crosssec_fit as cf
+from plot_aggregate_taxable import model_mean_taxable   # reuse E[min(exp Y, taxmax)]
+
+PARAMS = Path("output/cross_sections/cross_section_params_extrapolated.csv")
+TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
+DB      = cf.DB
+MUSD    = 1e6
+TAXMAX_1937_50 = 3000.0            # historical flat taxable maximum, 1937-1950
+
+
+def _duck(q):
+    return subprocess.run(["duckdb", DB, "-c", q], capture_output=True, text=True,
+                          check=True).stdout
+
+
+def trustees():
+    """TR intermediate: covered workers (persons), AWI, taxable payroll (millions USD)."""
+    d = pd.read_excel(TR_XLSX, sheet_name="Intermediate", header=0)
+    d = d.rename(columns={d.columns[0]: "year"})
+    d["year"] = d["year"].astype("Int64")
+    cov = d.dropna(subset=["Thousands of Covered Workers"])
+    awi = d.dropna(subset=["Average Wage Index"])
+    pay = d.dropna(subset=["Taxable Payroll, Billions"])
+    return (
+        {int(r.year): float(r._2) * 1e3 for r in
+         cov[["year", "Thousands of Covered Workers"]].itertuples()},
+        {int(r.year): float(r._2) for r in awi[["year", "Average Wage Index"]].itertuples()},
+        {int(r.year): float(r._2) * 1e3 for r in
+         pay[["year", "Taxable Payroll, Billions"]].itertuples()},   # billions -> millions
+    )
+
+
+def taxmax_series(years, awi):
+    """Taxable maximum per year: $3,000 (1937-50), the EPUF top-code (1951-2006), then
+    AWI-indexed off the 2006 value (SSA's own indexing) for 2007+."""
+    out = _duck("COPY (SELECT year, MAX(earnings) FROM annual WHERE earnings>0 "
+                "GROUP BY year) TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);")
+    tmax = {int(y): float(v) for y, v in (l.split(",") for l in out.strip().splitlines())}
+    base06 = tmax[2006]
+    tm = {}
+    for y in years:
+        if y in tmax:
+            tm[y] = tmax[y]
+        elif y <= 1950:
+            tm[y] = TAXMAX_1937_50
+        else:
+            tm[y] = base06 * awi[y] / awi[2006]        # 2007+ (awi covers 1970-2099)
+    return tm
+
+
+def epuf_shares():
+    """Empirical share of positive earners by (sex, single-year age) within each year,
+    1951-2006, as a nested dict year -> {(sex, age): share}."""
+    q = ("COPY (SELECT a.year, d.sex, (a.year-d.yob) AS age, COUNT(*) AS n "
+         "FROM annual a JOIN demographic d USING(id) "
+         "WHERE a.earnings>0 AND d.sex IN (1,2) AND d.yob IS NOT NULL "
+         "AND (a.year-d.yob) BETWEEN 15 AND 77 GROUP BY 1,2,3) "
+         "TO '/dev/stdout' (FORMAT CSV, HEADER TRUE);")
+    c = pd.read_csv(io.StringIO(_duck(q)))
+    shares = {}
+    for y, g in c.groupby("year"):
+        tot = g["n"].sum()
+        shares[int(y)] = {(int(r.sex), int(r.age)): r.n / tot for r in g.itertuples()}
+    return shares
+
+
+def model_totals(params, taxmax):
+    """Model mean taxable ($) per (year, sex, age), for the years present in `taxmax`."""
+    df = pd.read_csv(params)
+    means = {}
+    for r in df.to_dict("records"):
+        y = int(r["year"])
+        if y in taxmax:
+            means[(y, int(r["sex"]), int(r["age"]))] = model_mean_taxable(r, taxmax[y])
+    return means
+
+
+def agg_series(params, taxmax, shares, cov):
+    """Per-year aggregate taxable ($M): sum over cells of mean-taxable x (TR workers x EPUF
+    share), composition held at the 1951/2006 edges outside the data window."""
+    y_lo, y_hi = min(shares), max(shares)
+    means = model_totals(params, taxmax)
+    agg = {}
+    for y in taxmax:
+        sh = shares[min(max(y, y_lo), y_hi)]
+        s = 0.0
+        for (sex, age), frac in sh.items():
+            mt = means.get((y, sex, age))
+            if mt is not None and np.isfinite(mt):      # skip the few overflow cells (tiny weight)
+                s += mt * cov[y] * frac
+        agg[y] = s / MUSD
+    return agg
+
+
+def main():
+    cov, awi, trpay = trustees()
+    df = pd.read_csv(PARAMS)
+    years = sorted(set(df["year"]) & set(cov))          # model x TR-covered-workers overlap
+    taxmax = taxmax_series(years, awi)
+    shares = epuf_shares()
+    y_lo, y_hi = min(shares), max(shares)               # 1951 / 2006 edges for held composition
+    model = agg_series(PARAMS, taxmax, shares, cov)
+    # control: the fitted (pre-extrapolation) params through the identical pipeline, in-sample
+    fit_tm = {y: taxmax[y] for y in taxmax if y_lo <= y <= y_hi}
+    fitted = agg_series("output/cross_sections/cross_section_params_iterated.csv",
+                        fit_tm, shares, cov)
+
+    # ASS benchmark
+    out = _duck("COPY (SELECT year, reported_taxable_musd FROM supplement_4b1 "
+                "WHERE reported_taxable_musd IS NOT NULL) TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);")
+    ass = {int(y): float(v) for y, v in (l.split(",") for l in out.strip().splitlines())}
+
+    yr = np.array(years)
+    m = np.array([model[y] for y in years])
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.5, 5.4))
+
+    # ---- levels (log y, trillions) ----
+    ass_y = sorted(ass); tr_y = sorted(trpay)
+    ax1.plot([y for y in ass_y], [ass[y] / 1e6 for y in ass_y], color="k", lw=2.0,
+             label="ASS Table 4.B1 (published)")
+    ax1.plot([y for y in tr_y], [trpay[y] / 1e6 for y in tr_y], color="C2", lw=2.0,
+             label="TR 2023 taxable payroll (intermediate)")
+    ax1.plot(yr, m / 1e6, color="C3", lw=1.7, ls=":", label="extrapolated model")
+    fy = sorted(fitted)
+    ax1.plot(fy, [fitted[y] / 1e6 for y in fy], color="C1", lw=1.4,
+             label="fitted params (control, in-sample)")
+    ax1.axvspan(y_lo, y_hi, color="grey", alpha=0.08)
+    ax1.axvline(2006, color="grey", lw=0.8, ls="--")
+    ax1.set_yscale("log"); ax1.set_ylabel("aggregate taxable earnings ($ trillions)")
+    ax1.set_xlabel("year"); ax1.set_title("Levels (log scale)")
+    ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax1.legend(frameon=False, fontsize=8.5, loc="upper left")
+
+    # ---- ratio to each benchmark ----
+    ax2.axhline(1.0, color="k", lw=1.0)
+    ra = np.array([model[y] / ass[y] for y in years if y in ass])
+    xa = np.array([y for y in years if y in ass])
+    rt = np.array([model[y] / trpay[y] for y in years if y in trpay])
+    xt = np.array([y for y in years if y in trpay])
+    ax2.plot(xa, ra, color="k", lw=1.8, marker="o", ms=2.5, label="model / ASS")
+    ax2.plot(xt, rt, color="C2", lw=1.8, marker="s", ms=2.5, label="model / TR")
+    fc = np.array([fitted[y] / ass[y] for y in fy if y in ass])
+    fcx = np.array([y for y in fy if y in ass])
+    ax2.plot(fcx, fc, color="C1", lw=1.4, label="fitted / ASS (control)")
+    ax2.axvspan(y_lo, y_hi, color="grey", alpha=0.08, label="EPUF data years (real composition)")
+    ax2.axvline(2006, color="grey", lw=0.8, ls="--")
+    ax2.set_ylabel("model / published benchmark"); ax2.set_xlabel("year")
+    ax2.set_title("Relative to benchmark (1.0 = exact)")
+    ax2.legend(frameon=False, fontsize=8.5, loc="best")
+
+    fig.suptitle("Aggregate taxable earnings: extrapolated model vs ASS 4.B1 vs Trustees Report 2023",
+                 fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    outp = "output/cross_sections/aggregate_taxable_extrapolated"
+    fig.savefig(outp + ".pdf"); fig.savefig(outp + ".png", dpi=150); plt.close(fig)
+
+    print(f"{'year':>4} {'model($M)':>13} {'ASS($M)':>13} {'TR($M)':>13} {'m/ASS':>6} {'m/TR':>6}")
+    for y in years:
+        if y % 10 == 0 or y in (years[0], years[-1], 2006, 2007):
+            a = ass.get(y); t = trpay.get(y)
+            print(f"{y:>4} {model[y]:>13,.0f} {a if a else 0:>13,.0f} {t if t else 0:>13,.0f} "
+                  f"{model[y]/a if a else 0:>6.3f} {model[y]/t if t else 0:>6.3f}")
+    print(f"\nwrote {outp}.pdf and .png")
+
+
+if __name__ == "__main__":
+    main()
