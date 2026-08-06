@@ -1,46 +1,48 @@
 #!/usr/bin/env python
-"""Stage 3: polynomial extrapolation of the parameter surfaces to every birth cohort needed
-for cross-sections over a target year range (default 1937-2100).
+"""Stage 3: extrapolate the parameter surfaces to every birth cohort needed for
+cross-sections over a target year range (default 1937-2100), by ANCHORING at the
+recent data edge and driving only the location parameters with an external nominal
+wage-growth series.
 
-The penalized fits (iterate_fit_smooth.py) only cover cohorts the data see -- ~1880-1991.
-To synthesize cross-sections for years 1937-2100 we need cohorts 1860-2085 (year-age over
-age 15-77), so ~20 cohorts backward and ~94 forward are pure extrapolation. Per parameter we
-fit a polynomial that is HIGH-order in age (fully interpolated) and LINEAR in cohort (the
-extrapolated axis), then continue it past the data by a per-parameter tail rule.
+The penalized fits (iterate_fit_smooth.py) cover the years the data see (1951-2006),
+and THOSE are the interpolation -- kept verbatim. To reach the cohorts a 1937-2100
+panel needs (1860-2085 over ages 15-77) we extrapolate the missing years. The old
+approach fit a global polynomial per parameter and let a free linear-in-year slope
+carry the trend; that slope assumed constant nominal growth and so misfit the actual
+DECELERATING wage path (in-sample +/-15%, ~1.9x too hot by 2099). This version fixes
+that by construction, with three rules:
 
-Three design choices, each load-bearing:
+  * DROP the noisy tail: ignore fitted params after 2004 (the thinnest, most top-code-
+    distorted years) and anchor on the 2000-2004 average per (sex, age).
 
-  * ROTATE to the (age, year) frame.  cohort = year - age, so the raw (age, cohort) data is a
-    PARALLELOGRAM (its off-diagonal corners are years outside 1951-2006). The shear to
-    (age, year) squares it into the FULL rectangle age x [1951, 2006] -- every age spans the
-    same years -- so a TENSOR basis (independent age/year degrees) is well-posed and the
-    forward/back extrapolation is purely along year (= cohort at fixed age), one tail per age.
+  * FREEZE the shape parameters (men alpha/beta/tau; women sig1/sig2/w) at that
+    2000-2004 average, constant for every extrapolated year. They carry no secular
+    trend, so holding them fixed is both the honest prior and drift-free.
 
-  * LINEAR in cohort.  A quadratic-in-cohort fit necessarily has an interior extremum, and
-    over a 94-year forward reach its tail either crashes to a degenerate value (a concave
-    parameter past its in-sample peak) or accelerates off (convex). Linear removes the
-    turnaround -- the surface keeps moving in one direction, exactly the intent -- at a small
-    in-sample cost. The cohort slope may still vary smoothly with age (the age x year tensor
-    terms), it just cannot bend along cohort.
+  * DRIVE the location parameters (men nu; women mu1, mu2) by the published nominal
+    wage series, as a rigid log-shift of the frozen 2000-2004 age profile:
 
-  * PER-PARAMETER TAIL beyond coverage.  The location parameters carry real earnings growth,
-    so nu / mu1 / mu2 CONTINUE the linear cohort trend out to 2085. The shape parameters
-    (tail indices alpha/beta, dispersions tau/sig1/sig2, mixing weight w) would drift to
-    implausible values over 94 years of any nonzero slope, so beyond the last covered cohort
-    they are held CONSTANT at the fitted (smoothed) edge level -- the value at the last data
-    year for that age. In-sample both kinds use the fitted line; only the extrapolation differs.
+        m(sex, age, y) = m0(sex, age) + [ G(y) - Gbar ]
 
-Regimes: the retirement regime-switch is a real discontinuity, so each parameter is fit
-SEPARATELY on the pre- and post-retirement age blocks (cut 65 men / 60 women) -- clean
-horizontal cuts in the (age, year) frame -- and the surfaces may jump at the cut. Women's two
-mixture means are carried as the ordered gap reparam (mu2, log(mu1-mu2)) so the components
-never cross. mu2 trends, but the log-gap is held FLAT past coverage (a shape feature, and a
-trending log-gap would grow the separation EXPONENTIALLY): so mu1 = mu2 + exp(gap_edge) trends
-PARALLEL to mu2 -- a linear trend, always above mu2, and bounded.
+    m0 = the 2000-2004 mean location; G(y) = cumulative log nominal wage -- the ASS's
+    realized average covered earnings (log level) through 2004, spliced onto the
+    Trustees Report's projected wage growth (APC) forward; Gbar = G averaged over
+    2000-2004. Both women's means shift by the same G, so the gap is fixed and
+    mu1 > mu2 for free. Nominal growth now EQUALS the published/projected wage path,
+    the same assumption the TR taxable-payroll benchmark is built on.
+
+In-sample (1951-2004) cells keep their iterated values; the anchor model fills only
+the pre-data years (1937-1950, walking G back with realized ASS growth), the post-2004
+years (2005-2100, walking G forward with TR growth), and the handful of sparse
+in-sample cells the fitter skipped. The retirement regime-switch needs no special
+handling: shape is frozen per age and the location shifts per age, so nothing is ever
+fit across ages and each age keeps its own 2000-2004 profile (retirement ages included).
 
   python code/cross_sections/extrapolate_params.py [--y0 1937] [--y1 2100] [--preview]
     -> output/cross_sections/cross_section_params_extrapolated.csv
 """
+import io
+import subprocess
 import sys
 from pathlib import Path
 
@@ -48,133 +50,119 @@ sys.path.insert(0, "code/cross_sections")   # run from project root, per repo co
 import numpy as np
 import pandas as pd
 
-import crosssec_fit as cf    # SIG_MIN: the mixture sigma floor used when fitting
-import smooth_params as sp   # to_theta / from_theta share the fitters' theta coordinates
+import crosssec_fit as cf   # DB, SIG_MIN
 
-IN   = Path("output/cross_sections/cross_section_params_iterated.csv")
-OUT  = Path("output/cross_sections/cross_section_params_extrapolated.csv")
-Y0, Y1 = 1937, 2100          # target year range for the synthesized cross-sections
-DATA_Y0, DATA_Y1 = None, None   # data year span, filled from the input (constant-tail anchors)
+IN      = Path("output/cross_sections/cross_section_params_iterated.csv")
+OUT     = Path("output/cross_sections/cross_section_params_extrapolated.csv")
+TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
+Y0, Y1  = 1937, 2100          # target year range for the synthesized cross-sections
+ANCHOR  = (2000, 2004)        # window whose mean sets every anchor (drops post-2004)
+DATA_LAST = 2004              # last in-sample year kept (2005-06 dropped as noisy)
+TR_WAGE_COL = "Average Annual Nominal Wage in Covered Employment APC"
 
-# per sex: (label, retirement cut, [(param, theta transform, tail)]). tail = "trend" (continue
-# the linear cohort slope, for location/growth params) or "flat" (hold constant beyond the
-# covered cohorts, for bounded shape params). Women carry the ordered gap reparam
-# (mu2, loggap=log(mu1-mu2)); mu1 is reconstructed as mu2 + exp(loggap), both trending.
+# per sex: (model label, age ceiling, location params, shape params). Locations are
+# rigid-shifted by the wage index; shapes are frozen at the 2000-2004 mean.
 SPEC = {
-    1: ("men", 65, [("alpha", "log", "flat"), ("beta", "log", "flat"),
-                    ("nu", "id", "trend"),    ("tau", "log", "flat")]),
-    2: ("women", 60, [("mu2", "id", "trend"),   ("loggap", "raw", "flat"),
-                      ("sig1", "logsig", "flat"), ("sig2", "logsig", "flat"),
-                      ("w", "logit", "flat")]),
+    1: ("dpln",    77, ["nu"],         ["alpha", "beta", "tau"]),
+    2: ("mixture", 74, ["mu1", "mu2"], ["sig1", "sig2", "w"]),
 }
-AGE_DEG = {"pre": 4, "post": 3}   # age polynomial degree by regime (wide pre / narrow post)
+PARAM_COLS = ["alpha", "beta", "nu", "tau", "mu1", "mu2", "sig1", "sig2", "w"]
 
 
-def to_theta(v, kind):
-    return v if kind == "raw" else sp.to_theta(v, kind)
+def wage_log_index(y0, y1):
+    """G(y): cumulative log nominal wage over [y0, y1]. ASS realized average covered
+    earnings (log level, interpolated across its pre-1951 gaps) through 2004, then the
+    Trustees Report's projected wage growth (APC, % per year) spliced on forward."""
+    # ASS historical log levels (annual 1951+, sparse 1937/40/45/50 before)
+    out = subprocess.run(
+        ["duckdb", cf.DB, "-c",
+         "COPY (SELECT year, avg_total_earnings_usd FROM supplement_4b1 "
+         "WHERE avg_total_earnings_usd IS NOT NULL AND year <= 2004 ORDER BY year) "
+         "TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);"],
+        capture_output=True, text=True, check=True).stdout
+    ay, av = zip(*[(int(a), float(b)) for a, b in
+                   (l.split(",") for l in out.strip().splitlines())])
+    ay, alog = np.array(ay), np.log(np.array(av))
+
+    # TR projected nominal wage growth (annual percent change), 1960-2099
+    tr = pd.read_excel(TR_XLSX, sheet_name="Intermediate", header=0)
+    tr = tr.rename(columns={tr.columns[0]: "year"})[["year", TR_WAGE_COL]].dropna()
+    apc = {int(r.year): float(getattr(r, "_2")) for r in tr.itertuples()}
+
+    G = {}
+    for y in range(int(y0), DATA_LAST + 1):
+        G[y] = float(np.interp(y, ay, alog))                 # log level (exact at ASS years)
+    apc_last = apc[max(apc)]
+    for y in range(DATA_LAST + 1, int(y1) + 1):
+        G[y] = G[y - 1] + np.log1p(apc.get(y, apc_last) / 100.0)   # accumulate TR growth
+    return G
 
 
-def from_theta(t, kind):
-    return t if kind == "raw" else sp.from_theta(t, kind)
+def anchors(df):
+    """2000-2004 mean of every parameter, per (sex, age) -> dict (sex, age) -> Series."""
+    win = df[(df["year"] >= ANCHOR[0]) & (df["year"] <= ANCHOR[1])]
+    a = win.groupby(["sex", "age"])[PARAM_COLS].mean()
+    return {k: a.loc[k] for k in a.index}
 
 
-class PolyFit:
-    """One parameter, one regime: tensor polynomial, degree deg_a in age and LINEAR in year,
-    in scaled coordinates. `trend` continues the cohort line past the data; otherwise the
-    year is clamped to the data span so the extrapolation is flat at the fitted edge level."""
+def build(df, y0, y1):
+    G = wage_log_index(y0, y1)
+    Gbar = np.mean([G[y] for y in range(ANCHOR[0], ANCHOR[1] + 1)])
+    anc = anchors(df)
+    kept = {(int(r.sex), int(r.age), int(r.year)): r          # iterated cells to keep verbatim
+            for r in df[df["year"] <= DATA_LAST].itertuples()}
 
-    def __init__(self, age, year, z, deg_a, tail):
-        self.am, self.asd = age.mean(), age.std()
-        self.ym, self.ysd = year.mean(), year.std()
-        self.deg_a, self.trend = deg_a, (tail == "trend")
-        X = self._design(self._sa(age), self._sy(year))
-        self.coef, *_ = np.linalg.lstsq(X, z, rcond=None)
-        pred = X @ self.coef
-        self.r2 = 1.0 - ((z - pred) ** 2).sum() / max(((z - z.mean()) ** 2).sum(), 1e-12)
+    rows = []
+    for sex, (model, a_hi, locs, shapes) in SPEC.items():
+        for age in range(15, a_hi + 1):
+            base = anc.get((sex, age))
+            for year in range(int(y0), int(y1) + 1):
+                k = (sex, age, year)
+                if k in kept:                                  # in-sample interpolation, verbatim
+                    r = kept[k]
+                    row = {p: getattr(r, p) for p in PARAM_COLS}
+                elif base is not None:                         # anchor + wage-driven location
+                    row = {p: float(base[p]) for p in shapes}
+                    shift = G[year] - Gbar
+                    for p in locs:
+                        row[p] = float(base[p]) + shift
+                else:
+                    continue                                   # no anchor for this (sex, age)
+                if sex == 1:
+                    row.update(mu1=np.nan, mu2=np.nan, sig1=np.nan, sig2=np.nan, w=np.nan)
+                else:
+                    row.update(alpha=np.nan, beta=np.nan, nu=np.nan, tau=np.nan)
+                    row["sig1"] = max(row["sig1"], cf.SIG_MIN)
+                    row["sig2"] = max(row["sig2"], cf.SIG_MIN)
+                row.update(year=year, sex=sex, age=age, cohort=year - age, model=model)
+                rows.append(row)
 
-    def _sa(self, a):
-        return (np.asarray(a, float) - self.am) / self.asd
-
-    def _sy(self, y):
-        return (np.asarray(y, float) - self.ym) / self.ysd
-
-    def _design(self, a_s, y_s):
-        # age^i for i=0..deg_a, and age^i * year (linear in year) -> cohort slope varies with age
-        cols = [a_s ** i for i in range(self.deg_a + 1)]
-        cols += [(a_s ** i) * y_s for i in range(self.deg_a + 1)]
-        return np.column_stack(cols)
-
-    def predict(self, age, year):
-        yq = np.asarray(year, float)
-        if not self.trend:                                    # flat tail: clamp to data years
-            yq = np.clip(yq, DATA_Y0, DATA_Y1)
-        return self._design(self._sa(age), self._sy(yq)) @ self.coef
-
-
-def fit_sex(df, sex):
-    label, cut, params = SPEC[sex]
-    sub = df[df["sex"] == sex].copy()
-    sub["cohort"] = sub["year"] - sub["age"]
-    if any(p == "loggap" for p, _, _ in params):
-        sub["loggap"] = np.log(np.maximum(sub["mu1"] - sub["mu2"], 1e-3))
-    fits = {}
-    for reg, m in [("pre", sub["age"] < cut), ("post", sub["age"] >= cut)]:
-        d = sub[m]
-        for name, kind, tail in params:
-            z = to_theta(d[name].to_numpy(float), kind)
-            fits[(reg, name)] = PolyFit(d["age"].to_numpy(float), d["year"].to_numpy(float),
-                                        z, AGE_DEG[reg], tail)
-    return label, cut, params, fits
-
-
-def build_grid(sex, cut, params, fits, y0, y1):
-    """Every (age, year) cell over the model's age support x [y0, y1], filled from the
-    regime-appropriate fit and back-transformed to natural units."""
-    a_hi = 77 if sex == 1 else 74
-    ages, years = np.arange(15, a_hi + 1), np.arange(y0, y1 + 1)
-    AA, YY = (v.ravel() for v in np.meshgrid(ages, years))
-    out = pd.DataFrame({"year": YY, "sex": sex, "age": AA})
-    out["cohort"] = out["year"] - out["age"]
-    for name, kind, _tail in params:
-        vals = np.empty(len(out))
-        for reg, m in [("pre", AA < cut), ("post", AA >= cut)]:
-            vals[m] = from_theta(fits[(reg, name)].predict(AA[m], YY[m]), kind)
-        if name in ("sig1", "sig2"):          # keep the fit's sigma floor out of sample too
-            vals = np.maximum(vals, cf.SIG_MIN)
-        out[name] = vals
-    if sex == 2:                                              # ordered means from the gap reparam
-        out["mu1"] = out["mu2"] + np.exp(out.pop("loggap"))
-    return out
+    full = pd.DataFrame(rows)
+    cols = ["year", "sex", "age", "cohort", "model"] + PARAM_COLS
+    return full.reindex(columns=cols).sort_values(["sex", "age", "year"]).reset_index(drop=True)
 
 
 def main(y0=Y0, y1=Y1, preview=False):
-    global DATA_Y0, DATA_Y1
     df = pd.read_csv(IN)
-    DATA_Y0, DATA_Y1 = float(df["year"].min()), float(df["year"].max())
-    frames, report = [], []
-    for sex in (1, 2):
-        label, cut, params, fits = fit_sex(df, sex)
-        for (reg, name), f in fits.items():
-            tail = next(t for p, _, t in params if p == name)
-            report.append((label, reg, name, tail, f.r2))
-        frames.append(build_grid(sex, cut, params, fits, y0, y1))
-    full = pd.concat(frames, ignore_index=True)
-    full["model"] = np.where(full["sex"] == 1, "dpln", "mixture")
-    cols = ["year", "sex", "age", "cohort", "model",
-            "alpha", "beta", "nu", "tau", "mu1", "mu2", "sig1", "sig2", "w"]
-    full = full.reindex(columns=cols)
+    full = build(df, y0, y1)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     full.to_csv(OUT, index=False)
 
-    print(f"{'sex':6s} {'regime':5s} {'param':7s} {'tail':6s} {'R2':>6s}")
-    print("-" * 36)
-    for r in report:
-        print(f"{r[0]:6s} {r[1]:5s} {r[2]:7s} {r[3]:6s} {r[4]:6.3f}")
-    print(f"\nwrote {len(full)} rows -> {OUT}  (years {y0}-{y1}, "
-          f"cohorts {int(full.cohort.min())}-{int(full.cohort.max())})")
+    n_kept = ((full["year"] >= 1951) & (full["year"] <= DATA_LAST)).sum()
+    print(f"wrote {len(full)} rows -> {OUT}")
+    print(f"  years {y0}-{y1}, cohorts {int(full.cohort.min())}-{int(full.cohort.max())}")
+    print(f"  in-sample (iterated, verbatim-where-present): "
+          f"{n_kept} cells over 1951-{DATA_LAST}")
+    for sex, (model, a_hi, locs, _sh) in SPEC.items():
+        s = full[full.sex == sex]
+        loc = locs[0]
+        print(f"  sex {sex} ({model}): ages 15-{a_hi}, {loc} "
+              f"{s[loc].min():.2f}..{s[loc].max():.2f}")
+        if sex == 2:
+            assert (s["mu1"] >= s["mu2"]).all(), "mu1 < mu2 somewhere"
     if preview:
         import extrapolate_preview as pv
-        pv.render(df, full, DATA_Y0, DATA_Y1)
+        pv.render(df, full, 1951, DATA_LAST)
 
 
 if __name__ == "__main__":
