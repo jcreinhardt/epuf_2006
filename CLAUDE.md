@@ -43,20 +43,31 @@ python code/ssa_replication/plot_chart4_replication.py                          
 ```
 
 Run cross-sectional distribution fits (per year × sex × single-year-age earnings
-distributions). This is a **two-stage pipeline**: fit each cell, then smooth the
-parameter surfaces (the smoothed CSV feeds a downstream polynomial extrapolation).
+distributions). This is a **three-stage pipeline**: fit each cell, smooth the parameter
+surfaces while pinning the censored upper tail to the published uncapped mean, then
+extrapolate the surfaces off the observed span. Run the stages in order — each reads the
+prior CSV:
 
 ```bash
 # stage 1 — fit every (year, sex, age) cell → cross_section_params.csv (+ per-cell info)
 python code/cross_sections/estimate_cross_sections.py [--jobs N]
-# stage 2 — penalized smooth over the age×cohort grid → cross_section_params_smoothed.csv
-python code/cross_sections/smooth_params.py [--lam L] [--neighbors K]
+# stage 1.5 — penalized smooth over the age×cohort grid + ASS uncapped-mean moment match
+#             → cross_section_params_iterated.csv   (this is the current smoothing stage)
+python code/cross_sections/iterate_fit_smooth.py [--outer T] [--window W] [--jobs N] [--no-moment]
+# stage 3 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
+python code/cross_sections/extrapolate_params.py
 
-python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]         # raw histogram vs fitted density (defaults age 40, cohort 1950, women)
-python code/cross_sections/param_visualization.py [men|women|both] [csv]      # cohort×age heatmaps of every parameter (pass the smoothed CSV for its surfaces)
-python code/cross_sections/plot_aggregate_taxable.py [params.csv]             # model vs EPUF vs ASS aggregate taxable (defaults to raw; pass smoothed CSV to check it)
-python code/cross_sections/compare_year_fits.py [yearA yearB] [ages...]       # overlay two years' male dPlN fits across ages (the 1956-vs-1957 basin diagnostic)
+python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]                 # raw histogram vs fitted density (defaults age 40, cohort 1950, women)
+python code/cross_sections/param_visualization.py [men|women|both] [csv]              # cohort×age heatmaps of every parameter (pass the iterated CSV for its surfaces)
+python code/cross_sections/plot_aggregate_taxable.py [params.csv]                     # in-sample-only diagnostic: model vs EPUF vs ASS aggregate taxable (pre-extrapolation)
+python code/cross_sections/plot_aggregate_taxable_extrapolated.py                     # END-TO-END validation: extrapolated model vs ASS+TR, capped AND uncapped (the figure to trust)
+python code/cross_sections/compare_year_fits.py [yearA yearB] [ages...]               # overlay two years' male dPlN fits across ages (the 1956-vs-1957 basin diagnostic)
 ```
+
+`smooth_params.py` is the **old standalone stage 2**, superseded by `iterate_fit_smooth.py`
+(which folds its smoothing into the fit): it is no longer run as a pipeline stage and its
+`cross_section_params_smoothed.csv` output feeds nothing. The module is retained only because
+`iterate_fit_smooth` imports its `to_theta` transform helper.
 
 **Stage 1** (`estimate_cross_sections.py`) fits one distribution per `(year, sex,
 single-year age)` cell (~6.4k cells, ≥1000 obs each; smaller cells skipped), ~3 min.
@@ -66,18 +77,25 @@ is fit from a warm start (the previous age) *and* a cold start (dPlN: moment + l
 seeds; mixture: 6-point grid), keeping the lowest-negll converged fit — L-BFGS-B reports
 success at local optima too, so a single warm solve can lock a whole year into a worse
 basin (this was the 1957/1974 heavy-censoring aggregate bug). The CSV carries a `converged`
-flag and each cell's diagonal observed information (`info_*` columns) for stage 2.
+flag and each cell's diagonal observed information (`info_*` columns) for stage 1.5.
 
-**Stage 2** (`smooth_params.py`) borrows strength across cells to resolve the flat
-likelihood ridges (the dPlN upper-tail index, the mixture's minority component) whose
-argmax wanders between near-identical neighbours. It solves, per parameter in theta
-space, a precision-weighted roughness-penalized system: weight = the stored `info_*`
-(so well-identified ν/μ1 are frozen and the aggregate is preserved, ridge params defer
-to neighbours), penalty = the residual of a local-linear fit to each cell's `--neighbors`
-(default 5) nearest neighbours (trend-preserving, isotropic). `--lam` (default 10) is an
-information threshold: a parameter is smoothed only where its own info < ~λ. The women's
-two components are smoothed as `mu2` and `log(mu1−mu2)` so the full-time/part-time modes
-stay ordered and never cross.
+**Stage 1.5** (`iterate_fit_smooth.py`) does two things. First it borrows strength across
+cells to resolve the flat likelihood ridges (the dPlN upper-tail index, the mixture's
+minority component) whose argmax wanders between near-identical neighbours: an EM-style loop
+refits each cell against the *true* censored likelihood plus a roughness penalty toward the
+local-linear fit of its age×cohort neighbours, with a REML per-parameter precision `lam` (so
+well-identified ν/μ1 follow the data while the flat-ridge α snaps to the neighbour line).
+Then a **final moment-match pass** (`moment_match`, on by default; `--no-moment` skips) pins
+the one quantity the taxable cap censors — the mean. Under a tight cap ~40–45% of older men
+are top-coded and the censored MLE fits a heavy dPlN tail (`α≤1`, an *infinite* uncapped
+mean); capped comparisons hide this but the implied uncapped mean ran ~1.9× ASS pre-1951 and
+3–4× in the tight-cap late-1950s/60s. Per year we solve a single multiplier `eta` so the
+composition-weighted model `E[X]` over men+women 15–77 equals the published ASS uncapped mean
+(`aggearn_tot / num_wrk`), refitting each men cell **full-vector** (α, β, ν, τ together, so
+the body compensates as the tail thins) under `negll + Σ lam(θ−line)² + eta·w·E[X]`. Women's
+finite mixture mean is a fixed offset; `eta≥0` only thins, and is 0 where the model doesn't
+overshoot, so it self-limits to the tight-cap era. This makes stage 1.5 depend on the ASS
+workbook; the output gains `alpha_premoment` and `eta_mean` diagnostics.
 
 The fits themselves live in `code/cross_sections/crosssec_fit.py` — a shared,
 `(year, sex[, age])`-parameterized module: `fit_dpln` (men, double Pareto-lognormal)
@@ -97,7 +115,8 @@ import this module; write new cross-section analyses against it too.
   both `code/` and `output/`: `data_import/` (build the shared DB from raw CSV + saved
   HTML), `ssa_replication/` (replicate Compson 2012 RS Note figures/tables), and
   `cross_sections/` (fit per-cell earnings distributions by year × sex × age — dPlN,
-  lognormal mixture — then smooth the parameter surfaces over the age×cohort grid).
+  lognormal mixture — smooth the parameter surfaces over the age×cohort grid while pinning
+  the censored tail to the ASS uncapped mean, then extrapolate off the data edges).
   Everything is still run **from the project root**, so in-code paths stay root-relative
   (`processed_data/ssa.duckdb`, `output/<section>/...`).
 - **Single shared DB `processed_data/ssa.duckdb`** is the integration point. Everything —
