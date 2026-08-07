@@ -4,7 +4,7 @@ cross-sections over a target year range (default 1937-2100), by ANCHORING at the
 recent data edge and driving only the location parameters with an external nominal
 wage-growth series.
 
-The penalized fits (iterate_fit_smooth.py) cover the years the data see (1951-2006),
+The joint smoothed-constrained fits (estimate_cross_sections.py) cover the years the data see (1951-2006),
 and THOSE are the interpolation -- kept verbatim. To reach the cohorts a 1937-2100
 panel needs (1860-2085 over ages 15-77) we extrapolate the missing years. The old
 approach fit a global polynomial per parameter and let a free linear-in-year slope
@@ -57,7 +57,7 @@ growth), and the handful of sparse in-sample cells the fitter skipped. The retir
 handling: shape is frozen per age and the location shifts per age, so nothing is ever
 fit across ages and each age keeps its own 2000-2004 profile (retirement ages included).
 
-  python code/cross_sections/extrapolate_params.py [--y0 1937] [--y1 2100] [--preview]
+  python code/cross_sections/extrapolate_params.py [--y0 1937] [--y1 2100]
     -> output/cross_sections/cross_section_params_extrapolated.csv
 """
 import io
@@ -284,7 +284,7 @@ def build(df, y0, y1):
     return full, {"c0": c0, "c1": c1, "fit": cal_fit}
 
 
-def main(y0=Y0, y1=Y1, preview=False):
+def main(y0=Y0, y1=Y1):
     df = pd.read_csv(IN)
     full, cal = build(df, y0, y1)
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -309,15 +309,10 @@ def main(y0=Y0, y1=Y1, preview=False):
               f"{cal['c0'] + cal['c1']:.3f}@1950), calibrated to ASS aggearn_tot")
         print(f"  uncapped model/ASS over {CAL[0]}-{CAL[1]}: "
               f"min {min(r.values()):.3f}  mean {np.mean(list(r.values())):.3f}  max {max(r.values()):.3f}")
-    if preview:
-        import extrapolate_preview as pv
-        pv.render(df, full, 1951, DATA_LAST)
-
 
 if __name__ == "__main__":
     kw = {}
     for flag, key, cast in [("--y0", "y0", int), ("--y1", "y1", int)]:
         if flag in sys.argv:
             kw[key] = cast(sys.argv[sys.argv.index(flag) + 1])
-    kw["preview"] = "--preview" in sys.argv
     main(**kw)

@@ -64,7 +64,28 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 import crosssec_fit as cf
-from plot_aggregate_taxable import model_mean_taxable   # reuse E[min(exp Y, taxmax)]
+
+
+def model_mean_taxable(row, taxmax):
+    """E[min(exp Y, taxmax)] under the fitted distribution for one (year, sex, age) cell.
+
+    Integrate exp(y) f(y) up to log(taxmax) on a fine grid, then add the capped contribution
+    taxmax * P(Y > log taxmax) of the mass above the cap."""
+    thi = np.log(taxmax)
+    yy = np.linspace(np.log(1.0), thi, 6000)
+    if row["model"] == "dpln":
+        a, b, nu, tau = (float(row[k]) for k in ("alpha", "beta", "nu", "tau"))
+        dens = np.exp(cf.nl_logpdf(yy, a, b, nu, tau))
+        sf = 1.0 - cf.nl_cdf(thi, a, b, nu, tau)
+    else:
+        mu1, mu2, s1, s2, w = (float(row[k]) for k in ("mu1", "mu2", "sig1", "sig2", "w"))
+        dens = np.exp(cf.mix_logpdf(yy, mu1, mu2, s1, s2, w))
+        sf = cf.mix_sf(thi, mu1, mu2, s1, s2, w)
+    # the Normal-Laplace pdf overflows to +inf ~30 sigma into the lower tail (Mills ratio blows up
+    # where the density is negligible); zero those out.
+    integrand = np.nan_to_num(np.exp(yy) * dens, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.trapz(integrand, yy) + taxmax * float(np.clip(sf, 0.0, 1.0))
+
 
 PARAMS = Path("output/cross_sections/cross_section_params_extrapolated.csv")
 TR_XLSX = Path("raw_data/tr2023_summary.xlsx")

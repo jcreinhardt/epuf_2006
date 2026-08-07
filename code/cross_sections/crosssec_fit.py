@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Shared cross-section fitters: censored MLE of an earnings distribution for one
-(year, sex) slice of the EPUF microdata.
+(year, sex[, age]) slice of the EPUF microdata.
 
 Two models, one skeleton (doubly Type-I censored log-likelihood on log-earnings):
   - fit_dpln    -- double Pareto-lognormal (Normal-Laplace body+tails); used for men.
@@ -11,6 +11,23 @@ interior between LOWC and a year-specific HIGHC = taxmax(year) - HIGH_MARGIN.
 Everything is closed form (weighted normal pdf/cdf, or Normal-Laplace via Mills
 ratios), so the censored likelihood has no integrals. duckdb via the CLI, per
 repo convention.
+
+Each fitter's objective is the censored negll plus, when supplied, two coupling
+terms used by the joint smoothed-constrained solve (estimate_cross_sections.py):
+  - mean_pen=(eta, w)      -- eta*w*E[X](theta): the aggregate-uncapped-mean pull
+    (mean-constrained-mle skill). Separable across cells given one scalar eta/year.
+  - smooth_pen=(wvec, gt)  -- Sum_j wvec_j (g_j(theta) - gt_j)^2: a weighted quadratic
+    pull of the fitted distribution's FUNCTIONALS g (not raw params) toward a
+    neighbour-implied target (smoothed-constrained-mle skill, Gauss-Seidel reduction
+    of the roughness penalty). g is regime-invariant, so it survives the mixture's
+    component flips and the dPlN body/tail reparameterizations; wvec already folds in
+    the per-year rho, the frozen Omega and the robust (Huber) reweight from the driver.
+
+g_dpln / g_mix share one 6-slot layout -- [E logY, sd logY, skew logY, logit S(cap),
+lower tail, upper tail] -- so a single rho means the same thing for both sexes. Every
+slot is CLOSED FORM: g is evaluated inside every objective evaluation of the joint solve,
+so quantile-style functionals (which need bisection on the CDF) cost ~30x more and are
+deliberately avoided.
 """
 import subprocess
 import numpy as np
@@ -24,14 +41,22 @@ SIG_FLOOR   = 0.02      # guard against the mixture sigma->0 likelihood degenera
 SIG_MIN     = 0.20      # lower bound on each mixture sigma: stops a component collapsing onto
                         # a data-heaping spike (a round-earnings pile-up in sparse pre-1980
                         # retirement cells) -- the source of the sigma1/w basin ambiguity.
-                        # Only ~1% of cells (all at the age extremes) ever push against it.
+NU_LO, NU_HI = 3.0, 14.0    # dPlN log-location box (e^3 ~ $20 .. e^14 ~ $1.2M): keeps a heavily
+TAU_MIN, TAU_MAX = 0.05, 3.0  # censored cell's location/scale from running off, which would send
+                        # E[X] = exp(nu + tau^2/2)*... to inf and poison the year's aggregate.
+ALPHA_MIN   = 1.05      # floor on the dPlN upper-tail index whenever the mean pull is active. E[X]
+                        # ~ 1/(alpha-1), so alpha->1 makes the uncapped mean diverge; 1.05 caps that
+                        # factor at 20 and keeps the constrained mean well-defined in both directions.
 SIG_MAX     = 2.5       # upper bound on each mixture sigma: the mirror guard. Without it a minority
-                        # component in a sparse old-age cell runs to sigma~12 (mu at its bound), and
-                        # exp(mu+sigma^2/2) makes E[X] explode (~1e38); the pure-smoothing stage can
-                        # soften but not undo that, so a single cell can dominate a year's uncapped
-                        # aggregate. 2.5 clips only ~15 cells (all pathological; real dispersion <~2).
+                        # component in a sparse old-age cell runs to sigma~12 and exp(mu+sigma^2/2)
+                        # makes E[X] explode; 2.5 clips only a few pathological cells.
 LOG2PI      = np.log(2 * np.pi)
 SQRT2, SQRT_HALF_PI = np.sqrt(2.0), np.sqrt(np.pi / 2.0)
+# L-BFGS-B stopping: COLD (fresh multi-start) is thorough; WARM (an inner-loop solve seeded from
+# the neighbour/previous state) starts near-optimal, so a loose gtol stops it in 1-2 iterations --
+# the joint solve calls it tens of times per cell, so this is the difference between minutes and hours.
+COLD_OPTS = dict(maxiter=200, ftol=1e-9, gtol=1e-6)
+WARM_OPTS = dict(maxiter=40,  ftol=1e-6, gtol=1e-3)
 
 
 # ----------------------------------------------------------------------------- data
@@ -61,20 +86,23 @@ def censor_split(x, lowc, highc):
     return yi, int(low.sum()), int(high.sum())
 
 
-def _hess_diag(f, x0, rel=1e-4):
-    """Diagonal of the numerical Hessian of the negll f at the optimum x0 -- the
-    observed information per coordinate, in the optimiser's theta space. It is the
-    identifiability weight consumed by the smoothing stage (smooth_params.py):
-    near-zero along a flat ridge (defer to neighbours), large where sharply pinned."""
-    x0 = np.asarray(x0, dtype=float)
-    f0 = f(x0)
-    out = np.empty_like(x0)
-    for i in range(x0.size):
-        h = rel * max(abs(x0[i]), 1.0)
-        xp = x0.copy(); xp[i] += h
-        xm = x0.copy(); xm[i] -= h
-        out[i] = (f(xp) - 2.0 * f0 + f(xm)) / (h * h)
-    return out
+BIN_N = 256
+def bin_interior(yi):
+    """Histogram the interior log-earnings into <=BIN_N weighted mass points, so the interior
+    log-likelihood is a sum over ~256 bin centres rather than over every observation. Prime-age
+    cells hold ~1e4 obs; the joint solve refits each cell tens of times, and this is the single
+    biggest per-fit speedup. Bin width ~ range/256 ~ 0.03 in log-earnings -- negligible for the
+    smooth densities fitted here. Small cells (n<=BIN_N) pass through unbinned."""
+    if yi.size <= BIN_N:
+        return yi, np.ones(yi.size)
+    cnt, edges = np.histogram(yi, bins=BIN_N)
+    c, m = 0.5 * (edges[:-1] + edges[1:]), cnt > 0
+    return c[m], cnt[m].astype(float)
+
+
+def _logit(p):
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    return np.log(p / (1 - p))
 
 
 # ------------------------------------------------------------------ dPlN (men)
@@ -92,10 +120,38 @@ def nl_logpdf(y, a, b, nu, tau):    # Normal-Laplace log-density on log scale
             + np.log(_mills(a * tau - z) + _mills(b * tau + z)))
 
 
-def nl_cdf(y, a, b, nu, tau):       # Normal-Laplace CDF (scalar thresholds)
+def nl_cdf(y, a, b, nu, tau):       # Normal-Laplace CDF (of log-earnings)
     z = (y - nu) / tau
     phi = np.exp(_log_phi(z))
     return ndtr(z) - phi * (b * _mills(a * tau - z) - a * _mills(b * tau + z)) / (a + b)
+
+
+def dpln_mean(a, b, nu, tau):
+    """Analytic UNCAPPED mean E[X] of the dPlN (no cap). INFINITE where the upper Pareto
+    index a<=1 -- the censored-MLE heavy-tail pathology under a tight taxable maximum."""
+    if not (a > 1.0):
+        return np.inf
+    return np.exp(nu + tau * tau / 2.0) * (a * b) / ((a - 1.0) * (b + 1.0))
+
+
+def g_dpln(theta, logcap):
+    """Regime-invariant functional vector of the dPlN, common slots with g_mix:
+    [E log Y, sd log Y, skew log Y, logit S(cap), lower-tail log b, upper-tail log a].
+
+    ALL SIX ARE CLOSED FORM. logY ~ Normal-Laplace, whose cumulants are analytic:
+    k1 = nu + 1/a - 1/b, k2 = tau^2 + a^-2 + b^-2, k3 = 2 a^-3 - 2 b^-3; S(cap) comes from
+    nl_cdf. An earlier version used log-quantiles for the body, which need bisection on the
+    CDF -- 30x slower (0.29 ms vs 0.01 ms) and evaluated inside EVERY objective evaluation of
+    the joint solve. Cumulants pin the same body/shape content: location, dispersion, and the
+    skew that separates 'dispersed body, thin tail' from 'tight body, fat tail' (the competing
+    basins). theta = [log a, log b, nu, log tau]; logcap = log(HIGHC)."""
+    a, b, nu, tau = np.exp(theta[0]), np.exp(theta[1]), theta[2], np.exp(theta[3])
+    S = 1.0 - nl_cdf(logcap, a, b, nu, tau)
+    k2 = tau * tau + 1.0 / (a * a) + 1.0 / (b * b)
+    k3 = 2.0 / (a ** 3) - 2.0 / (b ** 3)
+    sd = np.sqrt(max(k2, 1e-12))
+    return np.array([nu + 1.0 / a - 1.0 / b, sd, k3 / sd ** 3,
+                     float(_logit(S)), np.log(b), np.log(a)])
 
 
 def _mom_start(yi):
@@ -118,141 +174,74 @@ def dpln_theta(r):                  # pack a fitted dPlN result into a warm-star
     return [np.log(r["alpha"]), np.log(r["beta"]), r["nu"], np.log(r["tau"])]
 
 
-def fit_dpln(x, lowc, highc, start=None, penalty=None, mean_pen=None):
-    """Fit the dPlN by censored MLE. `start` (a theta from dpln_theta) warm-starts
-    the optimizer from a neighbouring cell as a single local solve; None runs a
-    small multi-start -- the moment start plus a low- and a high-alpha seed that
-    straddle the two basins of the weakly-identified upper tail -- and keeps the
-    best. (Under heavy censoring the tail is nearly flat, so a single start can
-    converge to a worse local optimum; the seeds pin down the better basin.)
+def fit_dpln(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
+    """Fit the dPlN by censored MLE. `start` (a theta from dpln_theta) warm-starts the
+    optimizer as a single local solve; None runs a small multi-start (moment start plus a
+    low- and a high-alpha seed that straddle the two basins of the weakly-identified upper
+    tail) and keeps the best.
 
-    `penalty=(target, lam)` adds a per-parameter quadratic Sum lam_i (theta_i -
-    target_i)^2 (theta = [logα,logβ,ν,logτ]) to the objective -- the smoothness
-    prior that keeps a weakly-identified parameter (the flat-ridge upper tail) on
-    the neighbour line instead of being driven to a copied neighbour value by bare
-    keep-best.
-
-    `mean_pen=(eta, w)` adds eta*w*E[X](theta) -- the ANALYTIC dPlN uncapped mean
-    dpln_mean -- to the objective: a one-sided downward pull on the upper tail that
-    constrains the (cap-censored, hence unidentified above the cap) mean toward the
-    published aggregate. eta is a SINGLE global weight, tuned once so the 1937-2004
-    ASS-vs-model aggregate lines up; w is the cell's per-worker share (n_cell /
-    year total), which makes the pull scale-free against the likelihood -- both grow
-    with n_cell, so the correction is information-routed (identified cells barely
-    move, censored flat-ridge cells thin) and uniform across cell sizes. No per-year
-    target and no per-year solve: a fixed eta makes the aggregate moment SEPARABLE
-    into an independent per-cell penalty, so it lives in the stage-1 fit. When set,
-    log-alpha is bounded so alpha>1 (finite mean).
-
-    `negll`/`info_*` stay the PURE likelihood; `obj` is the penalized value used for
-    keep-best across warm starts."""
+    `mean_pen=(eta, w)` adds eta*w*E[X](theta) -- the analytic uncapped mean -- a one-sided
+    downward pull on the tail toward the published aggregate; log-alpha is then bounded so
+    alpha>1 (finite mean). `smooth_pen=(wvec, g_target)` adds the weighted-quadratic pull of
+    g_dpln toward its neighbour target. See module docstring."""
     yi, n_low, n_high = censor_split(x, lowc, highc)
+    yc, wc = bin_interior(yi)
     tlo, thi = np.log(lowc), np.log(highc)
 
     def negll(theta):
         a, b, nu, tau = np.exp(theta[0]), np.exp(theta[1]), theta[2], np.exp(theta[3])
-        ll = (nl_logpdf(yi, a, b, nu, tau).sum()
+        ll = (float(nl_logpdf(yc, a, b, nu, tau) @ wc)
               + n_low  * np.log(nl_cdf(tlo, a, b, nu, tau))
               + n_high * np.log1p(-nl_cdf(thi, a, b, nu, tau)))
         return -ll if np.isfinite(ll) else 1e18
 
-    pen = None if penalty is None else (np.asarray(penalty[0], float),
-                                        np.asarray(penalty[1], float))
-
     def obj(theta):
         val = negll(theta)
-        if pen is not None:
-            val += float(np.dot(pen[1], (np.asarray(theta) - pen[0]) ** 2))
         if mean_pen is not None:
             eta, w = mean_pen
             mth = dpln_mean(np.exp(theta[0]), np.exp(theta[1]), theta[2], np.exp(theta[3]))
             if not np.isfinite(mth):
                 return 1e18
             val += eta * w * mth
+        if smooth_pen is not None:
+            wv, gt = smooth_pen
+            d = g_dpln(theta, thi) - gt
+            sp = float(np.dot(wv, d * d))
+            if not np.isfinite(sp):
+                return 1e18
+            val += sp
         return val
 
-    bnds = ([(np.log(1.0 + 1e-3), None), (None, None), (None, None), (None, None)]
-            if mean_pen is not None else None)   # alpha>1 -> finite mean under the pull
+    # Structural bounds, not penalties (skill: reparameterize/constrain away degeneracies rather
+    # than hoping the penalty outvotes an unbounded likelihood). nu and log tau are boxed to a sane
+    # log-earnings range: in a ~75%-censored cell the interior carries almost no shape information
+    # and tau can run away, and E[X] ~ exp(nu + tau^2/2) then overflows to inf, which poisons the
+    # year's aggregate. Under the mean pull alpha is additionally floored at ALPHA_MIN > 1, where
+    # E[X] ~ 1/(alpha-1) stays finite in both pull directions.
+    amin = np.log(ALPHA_MIN) if mean_pen is not None else np.log(0.05)
+    bnds = [(amin, np.log(500.0)), (np.log(0.05), np.log(500.0)),
+            (NU_LO, NU_HI), (np.log(TAU_MIN), np.log(TAU_MAX))]
 
     if start is not None:
-        seeds = [start]
+        seeds, opts = [start], WARM_OPTS       # warm inner-loop solve: near-optimal, stop early
     else:
         m, s = yi.mean(), yi.std()
         a0, b0, nu0, tau0 = _mom_start(yi)
         seeds = [[np.log(a0), np.log(b0), nu0, np.log(tau0)],   # moment start
                  [np.log(3.0),  0.0, m, np.log(s)],             # low-alpha basin
                  [np.log(30.0), 0.0, m, np.log(s)]]             # high-alpha ridge
+        opts = COLD_OPTS
     res = None
     for seed in seeds:
-        r = minimize(obj, seed, method="L-BFGS-B", bounds=bnds)
+        r = minimize(obj, seed, method="L-BFGS-B", bounds=bnds, options=opts)
         if res is None or r.fun < res.fun:
             res = r
     a, b, nu, tau = np.exp(res.x[0]), np.exp(res.x[1]), res.x[2], np.exp(res.x[3])
-    hd = _hess_diag(negll, res.x)                          # info in theta=[logα,logβ,ν,logτ]
     return dict(model="dpln", n=x.size, n_low=n_low, n_high=n_high,
-                negll=float(negll(res.x)), obj=float(res.fun), converged=bool(res.success),
+                negll=float(negll(res.x)), converged=bool(res.success),
                 alpha=a, beta=b, nu=nu, tau=tau,
-                info_alpha=float(hd[0]), info_beta=float(hd[1]),
-                info_nu=float(hd[2]), info_tau=float(hd[3]),
                 p_low_model=float(nl_cdf(tlo, a, b, nu, tau)),
                 p_high_model=float(1 - nl_cdf(thi, a, b, nu, tau)))
-
-
-# ---------------------------------------- dPlN uncapped mean + profiled-alpha match
-def dpln_mean(a, b, nu, tau):
-    """Analytic UNCAPPED mean E[X] of the dPlN (no cap). INFINITE where the upper Pareto
-    index a<=1 -- the censored-MLE heavy-tail pathology under a tight taxable maximum."""
-    if not (a > 1.0):
-        return np.inf
-    return np.exp(nu + tau * tau / 2.0) * (a * b) / ((a - 1.0) * (b + 1.0))
-
-
-def dpln_negll(x, lowc, highc, a, b, nu, tau):
-    """Doubly-censored dPlN negative log-likelihood at a given parameter vector -- the pure
-    fit measure (no penalties), used to price the fit cost of the mean-moment match."""
-    yi, n_low, n_high = censor_split(x, lowc, highc)
-    tlo, thi = np.log(lowc), np.log(highc)
-    ll = (nl_logpdf(yi, a, b, nu, tau).sum()
-          + n_low  * np.log(nl_cdf(tlo, a, b, nu, tau))
-          + n_high * np.log1p(-nl_cdf(thi, a, b, nu, tau)))
-    return float(-ll) if np.isfinite(ll) else 1e18
-
-
-def fit_dpln_mean(x, lowc, highc, start, line, lam, eta, w, amin=1.0 + 1e-3):
-    """FULL-vector penalized fit of one dPlN cell under a mean moment. Minimizes
-
-        negll(theta)  +  Sum_p lam_p (theta_p - line_p)^2  +  eta * w * E[X](theta),
-
-    theta = [logα, logβ, ν, logτ]. The three terms are the censored likelihood, the stage-1.5
-    smoothness prior (line = neighbour-line theta, lam = its REML precision), and the aggregate-
-    mean moment (eta shared across a year's cells, w the cell's worker weight). ALL FOUR params
-    move, so the body (ν, τ, β) re-optimizes to compensate as the tail thins -- the mean match
-    costs little likelihood, unlike freezing the body and pushing alpha alone. eta trades tail
-    weight for mean; against each cell's own curvature the pull is information-routed (identified
-    cells barely move, the censored flat-ridge alpha absorbs it). logα is bounded so alpha>amin,
-    keeping E[X] finite. Returns (alpha, beta, nu, tau, negll_pure) -- negll at the optimum,
-    WITHOUT the penalties, so fit loss vs the unconstrained smooth fit is measurable."""
-    yi, n_low, n_high = censor_split(x, lowc, highc)
-    tlo, thi = np.log(lowc), np.log(highc)
-    line, lam = np.asarray(line, float), np.asarray(lam, float)
-
-    def negll(theta):
-        a, b, nu, tau = np.exp(theta[0]), np.exp(theta[1]), theta[2], np.exp(theta[3])
-        ll = (nl_logpdf(yi, a, b, nu, tau).sum()
-              + n_low  * np.log(nl_cdf(tlo, a, b, nu, tau))
-              + n_high * np.log1p(-nl_cdf(thi, a, b, nu, tau)))
-        return -ll if np.isfinite(ll) else 1e18
-
-    def obj(theta):
-        m = dpln_mean(np.exp(theta[0]), np.exp(theta[1]), theta[2], np.exp(theta[3]))
-        if not np.isfinite(m):
-            return 1e18
-        return negll(theta) + float(np.dot(lam, (theta - line) ** 2)) + eta * w * m
-
-    bnds = [(np.log(amin), None), (None, None), (None, None), (None, None)]
-    res = minimize(obj, np.asarray(start, float), method="L-BFGS-B", bounds=bnds)
-    a, b, nu, tau = np.exp(res.x[0]), np.exp(res.x[1]), res.x[2], np.exp(res.x[3])
-    return a, b, nu, tau, float(negll(res.x))
 
 
 # --------------------------------------------------- lognormal mixture (women)
@@ -290,95 +279,105 @@ def mix_theta(r):                   # pack a fitted mixture result into a warm-s
 
 
 def mix_mean(mu1, mu2, s1, s2, w):
-    """Analytic UNCAPPED mean of the two-component lognormal mixture -- always finite. Under a
-    tight cap women are heavily top-coded too, so their censored fit can still overshoot; the
-    per-year moment match carries the women's cells (mean_pen in fit_mixture) alongside the men's."""
+    """Analytic UNCAPPED mean of the two-component lognormal mixture -- always finite.
+    Under a tight cap women are heavily top-coded too, so their censored fit can overshoot;
+    the per-year moment match carries the women's cells (mean_pen) alongside the men's."""
     return w * np.exp(mu1 + s1 * s1 / 2.0) + (1 - w) * np.exp(mu2 + s2 * s2 / 2.0)
 
 
-def fit_mixture(x, lowc, highc, start=None, penalty=None, mean_pen=None):
-    """Fit the lognormal mixture by censored MLE. `start` (a theta from mix_theta)
-    warm-starts from a neighbouring cell as a single local optimisation; None runs
-    the deterministic 6-point restart grid.
+def _mix_tail_means(c, p, S):
+    """(E[logY | logY>c], E[logY | logY<c]) for the two-component normal mixture, closed form.
+    Per component, E[Y|Y>c] = mu + s*phi(z)/(1-Phi(z)); mixture-weight them by each component's
+    share of the mass on that side. Returns finite fallbacks when a side carries ~no mass."""
+    mu1, mu2, s1, s2, w = p
+    tot_hi = max(S, 1e-12)
+    tot_lo = max(1.0 - S, 1e-12)
+    hi = lo = 0.0
+    for mu, s, wt in ((mu1, s1, w), (mu2, s2, 1 - w)):
+        z = (c - mu) / s
+        sf = ndtr(-z)                      # P(Y > c) for this component
+        pdf = np.exp(-0.5 * LOG2PI - 0.5 * z * z)
+        hi += wt * (mu * sf + s * pdf)     # wt * P(>c) * E[Y|Y>c]
+        lo += wt * (mu * ndtr(z) - s * pdf)
+    return float(hi / tot_hi), float(lo / tot_lo)
 
-    `penalty=(target, lam)` adds Sum lam_i (theta_i - target_i)^2 (theta =
-    [μ1,μ2,logσ1',logσ2',logit w]) to the objective -- the smoothness prior toward
-    the neighbour line. The target is in the mean-ordered convention (component 1 =
-    higher mean), matching the relabelling below.
 
-    `mean_pen=(eta, w)` adds eta*w*E[X](theta) -- the ANALYTIC mixture uncapped mean
-    mix_mean -- to the objective, the SAME per-year multiplier the men's dPlN cells
-    carry (see fit_dpln): under a tight cap women are also heavily top-coded, so their
-    censored minority component inflates (sigma runs to SIG_MAX); the shared eta thins
-    that unidentified tail exactly as it thins the men's, so both sexes are pulled onto
-    the published aggregate jointly rather than loading the whole correction onto men.
+def g_mix(theta, logcap):
+    """Regime-invariant functional vector of the mixture, SAME slots as g_dpln:
+    [E log Y, sd log Y, skew log Y, logit S(cap), lower-tail, upper-tail].
 
-    `negll`/`info_*` stay the PURE likelihood; `obj` is the penalized value for
-    keep-best."""
+    ALL SIX ARE CLOSED FORM (normal-mixture central moments + mix_sf; no quantile inversion --
+    see g_dpln). Every component is a functional of the DISTRIBUTION, never of a single component,
+    so the vector is unchanged when the two components swap labels. That is why the tail slots are
+    mean excess of logY on either side of the cap rather than a raw sigma: the larger-sigma
+    component governs the tail and which one that is flips across cells."""
+    mu1, mu2, s1, s2, w = p = _unpack(theta)
+    S = mix_sf(logcap, *p)
+    m = w * mu1 + (1 - w) * mu2
+    var = w * (s1 * s1 + mu1 * mu1) + (1 - w) * (s2 * s2 + mu2 * mu2) - m * m
+    c3 = (w * ((mu1 - m) ** 3 + 3 * (mu1 - m) * s1 * s1)
+          + (1 - w) * ((mu2 - m) ** 3 + 3 * (mu2 - m) * s2 * s2))
+    sd = np.sqrt(max(var, 1e-12))
+    # E[logY | logY > cap] and E[logY | logY < cap], both closed form for a normal mixture via
+    # the per-component truncated means; the pair pins what the mixture extrapolates above the cap.
+    hi, lo_ = _mix_tail_means(logcap, p, S)
+    return np.array([m, sd, c3 / sd ** 3, float(_logit(S)), lo_, hi])
+
+
+def fit_mixture(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
+    """Fit the lognormal mixture by censored MLE. `start` (a theta from mix_theta) warm-starts
+    a single local solve; None runs the deterministic 6-point restart grid. `mean_pen`/`smooth_pen`
+    add the uncapped-mean pull and the g_mix smoothness pull (module docstring); the SAME per-year
+    eta the men carry thins the women's over-heavy censored tail so both sexes hit the aggregate
+    jointly."""
     yi, n_low, n_high = censor_split(x, lowc, highc)
+    yc, wc = bin_interior(yi)
     tlo, thi = np.log(lowc), np.log(highc)
 
     def negll(theta):
         p = _unpack(theta)
-        ll = (mix_logpdf(yi, *p).sum()
+        ll = (float(mix_logpdf(yc, *p) @ wc)
               + n_low  * np.log(mix_cdf(tlo, *p))
               + n_high * np.log(mix_sf(thi, *p)))
         return -ll if np.isfinite(ll) else 1e18
 
-    pen = None if penalty is None else (np.asarray(penalty[0], float),
-                                        np.asarray(penalty[1], float))
-
     def obj(theta):
         val = negll(theta)
-        if pen is not None:
-            val += float(np.dot(pen[1], (np.asarray(theta) - pen[0]) ** 2))
         if mean_pen is not None:
             eta, w = mean_pen
             val += eta * w * mix_mean(*_unpack(theta))
+        if smooth_pen is not None:
+            wv, gt = smooth_pen
+            d = g_mix(theta, thi) - gt
+            sp = float(np.dot(wv, d * d))
+            if not np.isfinite(sp):
+                return 1e18
+            val += sp
         return val
 
-    # bound each log-sigma theta so sigma = SIG_FLOOR + exp(ls) >= SIG_MIN: forbids the
-    # heaping-spike basin without touching the ~99% of cells that sit well above the floor.
-    lo, hi = np.log(SIG_MIN - SIG_FLOOR), np.log(SIG_MAX - SIG_FLOOR)   # sigma in [SIG_MIN, SIG_MAX]
-    bnds = [(4.0, 13.0), (4.0, 13.0), (lo, hi), (lo, hi), (None, None)]  # mu in a sane
-    #   log-earnings range so a near-empty minority component can't run off to +/-100; then
-    #   its info -> 0 and the stage-1.5 penalty cleanly pulls it onto the neighbour line.
+    # bound each log-sigma theta so sigma = SIG_FLOOR + exp(ls) in [SIG_MIN, SIG_MAX]; mu in a sane
+    # log-earnings range so a near-empty minority component can't run off to +/-100.
+    lo, hi = np.log(SIG_MIN - SIG_FLOOR), np.log(SIG_MAX - SIG_FLOOR)
+    bnds = [(4.0, 13.0), (4.0, 13.0), (lo, hi), (lo, hi), (None, None)]
     if start is not None:
-        best = minimize(obj, start, method="L-BFGS-B", bounds=bnds)
+        best = minimize(obj, start, method="L-BFGS-B", bounds=bnds, options=WARM_OPTS)
     else:
-        # deterministic restarts: vary weight and component separation about the interior mean
         m, s = yi.mean(), yi.std()
         ls = np.log(max(0.7 * s - SIG_FLOOR, 1e-3))
         best = None
         for w0 in (0.3, 0.5, 0.7):
             for d in (0.4, 0.9):
                 theta0 = [m + d * s, m - d * s, ls, ls, np.log(w0 / (1 - w0))]
-                res = minimize(obj, theta0, method="L-BFGS-B", bounds=bnds)
+                res = minimize(obj, theta0, method="L-BFGS-B", bounds=bnds, options=COLD_OPTS)
                 if best is None or res.fun < best.fun:
                     best = res
 
     mu1, mu2, s1, s2, w = _unpack(best.x)
-    hd = _hess_diag(negll, best.x)      # info in theta=[μ1,μ2,logσ1',logσ2',logit w]
     if mu1 < mu2:                       # label: component 1 = higher mean
         mu1, mu2, s1, s2, w = mu2, mu1, s2, s1, 1 - w
-        hd = hd[[1, 0, 3, 2, 4]]        # keep info aligned with the relabelled params
     p = (mu1, mu2, s1, s2, w)
     return dict(model="mixture", n=x.size, n_low=n_low, n_high=n_high,
-                negll=float(negll(best.x)), obj=float(best.fun), converged=bool(best.success),
+                negll=float(negll(best.x)), converged=bool(best.success),
                 mu1=mu1, mu2=mu2, sig1=s1, sig2=s2, w=w,
-                info_mu1=float(hd[0]), info_mu2=float(hd[1]), info_sig1=float(hd[2]),
-                info_sig2=float(hd[3]), info_w=float(hd[4]),
                 p_low_model=float(mix_cdf(tlo, *p)),
                 p_high_model=float(mix_sf(thi, *p)))
-
-
-def ppf_mixture(prob, p, lo=np.log(1.0), hi=np.log(1e7)):
-    """Invert the mixture CDF by bisection (used by the plot / diagnostic scripts)."""
-    prob = np.asarray(prob, dtype=float)
-    lo, hi = np.full_like(prob, lo), np.full_like(prob, hi)
-    for _ in range(60):
-        mid = 0.5 * (lo + hi)
-        go = mix_cdf(mid, *p) < prob
-        lo = np.where(go, mid, lo)
-        hi = np.where(go, hi, mid)
-    return 0.5 * (lo + hi)
