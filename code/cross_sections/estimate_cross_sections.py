@@ -80,8 +80,10 @@ DEDUPE     = 5e-2              # min g-distance between distinct candidates
 SMOOTH_FRAC = 1e-4
 RHO_STEPS  = 4                # rho-continuation steps (skill Sec.7)
 RHO0_START = 30.0             # continuation begins at RHO0_START * rho_target
-CONT_PASSES = 2              # Gauss-Seidel passes per rho during continuation (warm; alternate dir)
-ETA_PASSES  = 3              # Gauss-Seidel passes per eta evaluation in the root-find
+# Gauss-Seidel effort. Read from the environment because the year workers are SPAWNED (macOS), so
+# they re-import this module and never see globals rebound in main(); env vars they do inherit.
+CONT_PASSES = int(os.environ.get("XS_CONT_PASSES", "2"))   # passes per rho during continuation
+ETA_PASSES  = int(os.environ.get("XS_ETA_PASSES", "3"))    # passes per eta evaluation in the search
 BISECT_ITERS = 18            # bisection steps for eta (see the best-tracking search in solve_eta)
 GS_TOL     = 1e-3            # early-stop a pass sweep: max |dg| across cells
 HUBER_K    = 1.5            # Huber knee, in standardized (Omega-scaled) roughness units

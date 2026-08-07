@@ -25,18 +25,17 @@ that by construction, with three rules:
     fixes that. This mirrors the composition scheme in the validation plot, which likewise
     reaches to 1951-55 backward and 2000-04 forward.
 
-    EXCEPTION -- men's alpha pre-1951. The 1951-55 alpha is itself a censoring artifact: under
-    the low 1950s cap ~45% of older men are top-coded, so the censored MLE parks the upper Pareto
-    index below 1 (an INFINITE uncapped mean). Frozen back onto the even looser pre-1951 caps that
-    over-states the tail -- invisible in taxable earnings (the cap clips it) but a 1.9x overshoot in
-    the model's implied UNCAPPED mean vs ASS aggearn_tot. So instead of freezing men's alpha we
-    CALIBRATE it: a uniform additive linear-in-year trend alpha += c0 + c1*(1951 - y), ONE trend
-    for all ages (the pre-1951 years have no microdata to identify an age-specific tail), with
-    (c0, c1) fit so the model's uncapped mean per worker matches ASS aggearn_tot over 1937-1950
-    (calibrate_alpha_trend). Two parameters against a published moment -- low-dimensional by design,
-    since alpha is unidentified above the cap. beta/tau/nu and all of women's params still freeze/
-    wage-shift as above; the trend is scoped to pre-1951 only, so the in-sample fits are untouched
-    (a deliberate choice, leaving a step in alpha at the 1950/1951 splice).
+    EXCEPTION -- men's alpha pre-1951. These years are before the data, so they inherit the 1951-55
+    tail unadjusted, which lands ~5% under the ASS benchmark. So instead of freezing men's alpha we
+    CALIBRATE it: a per-year MULTIPLICATIVE scale alpha *= k_y, one scalar against one published
+    moment per year (aggearn_tot / num_wrk), solved by root-find so each year matches EXACTLY
+    (calibrate_alpha_scale). Exactly identified, nothing overfitted -- and legitimate precisely
+    because alpha is unidentified above the low pre-1951 cap, so the published mean is the only
+    information about it. E[X] ~ alpha/(alpha-1) is monotone in alpha, so the solve is well posed in
+    both directions, and k is bounded so k*alpha > 1 keeps every cell's mean finite. Women's params
+    are held FIXED and enter as an offset, as does men's wage-driven location. beta/tau/nu still
+    freeze/wage-shift as above; the scale is scoped to pre-1951 only, so the in-sample fits are
+    untouched (a deliberate choice, leaving a step in alpha at the 1950/1951 splice).
 
   * DRIVE the location parameters (men nu; women mu1, mu2) by the published nominal
     wage series, as a rigid log-shift of the frozen 2000-2004 age profile:
@@ -68,7 +67,7 @@ from pathlib import Path
 sys.path.insert(0, "code/cross_sections")   # run from project root, per repo convention
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import brentq
 
 import crosssec_fit as cf   # DB, SIG_MIN
 
@@ -79,7 +78,9 @@ ASS_XLSX = Path("raw_data/annual_statistical_supplement.xlsx")
 Y0, Y1  = 1937, 2100          # target year range for the synthesized cross-sections
 ANCHOR  = (2000, 2004)        # forward anchor: shapes frozen + locations wage-shifted off here
 BACK    = (1951, 1955)        # backward anchor for pre-1951 (mirrors the composition scheme)
-CAL     = (1937, 1950)        # pre-1951 span the men-alpha tail trend is calibrated over
+CAL     = (1937, 1950)        # pre-1951 span the men-alpha tail scale is calibrated over
+ALPHA_K_EPS = 1e-3            # margin keeping k*alpha strictly > 1 (finite uncapped mean)
+ALPHA_K_HI  = 50.0            # upper bound on the per-year alpha scale
 DATA_LAST = 2004              # last in-sample year kept (2005-06 dropped as noisy)
 TR_WAGE_COL = "Average Annual Nominal Wage in Covered Employment APC"
 
@@ -173,33 +174,37 @@ def _mix_mean(w, mu1, sig1, mu2, sig2):
     return w * np.exp(mu1 + sig1 ** 2 / 2) + (1 - w) * np.exp(mu2 + sig2 ** 2 / 2)
 
 
-def calibrate_alpha_trend(anc_back, G, Gbar_back):
-    """Fit a UNIFORM additive linear-in-year shift delta(y) = c0 + c1*(BACK[0] - y) to men's alpha
-    over the pre-1951 span, so the model's implied UNCAPPED mean earnings per worker matches the ASS
-    aggearn_tot benchmark year by year. ONE trend for all ages: the pre-1951 years have no microdata,
-    so an age-specific tail is unidentified; we borrow the 1951-55 age PROFILE of alpha and move only
-    its level/slope, against a single published moment per year (aggearn_tot / num_wrk). Deliberately
-    2-dimensional to avoid overfitting alpha -- which is itself unidentified above the low pre-1951
-    cap (censored-MLE parks it below 1, an infinite-mean tail). Only men's dPlN tail moves; women's
-    finite mixture mean and men's wage-driven location enter each year's target as fixed offsets.
+def calibrate_alpha_scale(anc_back, G, Gbar_back):
+    """Per-year MULTIPLICATIVE scale k_y on men's alpha over the pre-1951 span, solved so the model's
+    implied UNCAPPED mean earnings per worker matches the ASS benchmark (aggearn_tot / num_wrk)
+    EXACTLY, year by year. Women's mixture parameters are held fixed and enter as an offset, as does
+    men's wage-driven location; only the men's tail index moves.
 
-    Returns (c0, c1, {year: model_uncapped/ASS ratio}). Additive on alpha is well-suited: d E[X]/d
-    alpha is far steeper at small alpha, so a uniform shift corrects the pathological old-age tails
-    (alpha ~ 0.5) much more than the already-thin young-age tails (alpha ~ 2)."""
+    These years are pure extrapolation -- EPUF starts in 1951, so no cell here is fit to data. We
+    borrow the 1951-55 age PROFILE of alpha and rescale its level, one scalar per year against one
+    published moment per year: exactly identified, nothing overfitted. A scale (not the additive
+    shift used before) keeps the profile's shape in relative terms and cannot reorder ages.
+
+    E[X] ~ alpha/(alpha-1) is strictly DECREASING in alpha, so each year is a monotone 1-D root-find
+    -- unlike the in-sample eta multiplier, this direction is well posed both ways. k is bounded
+    below so that k*alpha > 1 in every cell (finite mean) and above by ALPHA_K_HI; where the target
+    lies outside the reachable range the year is clamped to the nearest bound.
+
+    Returns ({year: k}, {year: model_uncapped/ASS ratio})."""
     comp = back_composition()
     cov, tot = ass_workers(), ass_total_earnings()
     yrs = [y for y in range(CAL[0], CAL[1] + 1) if y in cov and y in tot]
     men = {a: anc_back[(1, a)] for (s, a) in anc_back if s == 1}
     wom = {a: anc_back[(2, a)] for (s, a) in anc_back if s == 2}
 
-    def model_pw(y, c0, c1):
-        d = c0 + c1 * (BACK[0] - y); shift = G[y] - Gbar_back; s = 0.0
+    def model_pw(y, k):
+        shift = G[y] - Gbar_back; s = 0.0
         for (sex, age), frac in comp.items():
             if sex == 1:
                 b = men.get(age)
                 if b is None:
                     continue
-                m = _dpln_mean(b["alpha"] + d, b["beta"], b["nu"] + shift, b["tau"])
+                m = _dpln_mean(k * b["alpha"], b["beta"], b["nu"] + shift, b["tau"])
             else:
                 b = wom.get(age)
                 if b is None:
@@ -210,23 +215,21 @@ def calibrate_alpha_trend(anc_back, G, Gbar_back):
             s += m * frac
         return s
 
-    def obj(p):
-        c0, c1 = p
-        if c0 < 0 or c1 < 0:                          # tails only thin (or hold) going back
-            return 1e9
-        e = 0.0
-        for y in yrs:
-            mp = model_pw(y, c0, c1)
-            if not np.isfinite(mp):                   # any alpha<=1 cell -> infinite mean -> reject
-                return 1e9
-            e += (np.log(mp / (tot[y] / cov[y]))) ** 2
-        return e
-
-    res = minimize(obj, [1.0, 0.05], method="Nelder-Mead",
-                   options={"xatol": 1e-4, "fatol": 1e-8, "maxiter": 3000})
-    c0, c1 = float(res.x[0]), float(res.x[1])
-    fit = {y: model_pw(y, c0, c1) / (tot[y] / cov[y]) for y in yrs}
-    return c0, c1, fit
+    a_min = min(b["alpha"] for b in men.values())
+    k_lo = (1.0 + ALPHA_K_EPS) / a_min          # every k*alpha > 1 -> every cell mean finite
+    scale, fit = {}, {}
+    for y in yrs:
+        target = tot[y] / cov[y]
+        f_lo, f_hi = model_pw(y, k_lo) - target, model_pw(y, ALPHA_K_HI) - target
+        if not np.isfinite(f_lo) or f_lo < 0:   # even the fattest allowed tail undershoots
+            k = k_lo
+        elif f_hi > 0:                          # even the thinnest still overshoots
+            k = ALPHA_K_HI
+        else:
+            k = brentq(lambda v: model_pw(y, v) - target, k_lo, ALPHA_K_HI, xtol=1e-8, maxiter=100)
+        scale[y] = float(k)
+        fit[y] = model_pw(y, k) / target
+    return scale, fit
 
 
 def build(df, y0, y1):
@@ -238,10 +241,10 @@ def build(df, y0, y1):
     kept = {(int(r.sex), int(r.age), int(r.year)): r          # iterated cells to keep verbatim
             for r in df[df["year"] <= DATA_LAST].itertuples()}
 
-    # pre-1951 men-alpha trend RETIRED: stage 1's uncapped-mean penalty (mean_pen) now pins the
-    # tail at the source, so the 1951-55 backward anchor is already mean-correct -- no separate
-    # pre-1951 alpha calibration. (calibrate_alpha_trend + its ASS helpers are dead; removed in cleanup.)
-    c0 = c1 = 0.0; cal_fit = {}
+    # Pre-1951 men-alpha scale. Stage 1's constraint pins 1951 onward, but these years are BEFORE
+    # the data and inherit the 1951-55 anchor unadjusted, which lands ~5% under the ASS benchmark.
+    # One scalar per year on men's alpha closes that exactly; women's params stay fixed.
+    a_scale, cal_fit = calibrate_alpha_scale(anc_back, G, Gbar_back)
 
     rows = []
     for sex, (model, a_hi, locs, shapes) in SPEC.items():
@@ -266,7 +269,7 @@ def build(df, y0, y1):
                     for p in locs:
                         row[p] = float(base[p]) + shift
                     if sex == 1 and year < BACK[0] and base is base_back:
-                        row["alpha"] += c0 + c1 * (BACK[0] - year)   # calibrated pre-1951 tail trend
+                        row["alpha"] *= a_scale.get(year, 1.0)       # per-year pre-1951 tail scale
                 else:
                     continue                                   # no anchor for this (sex, age)
                 if sex == 1:
@@ -281,7 +284,7 @@ def build(df, y0, y1):
     full = pd.DataFrame(rows)
     cols = ["year", "sex", "age", "cohort", "model"] + PARAM_COLS
     full = full.reindex(columns=cols).sort_values(["sex", "age", "year"]).reset_index(drop=True)
-    return full, {"c0": c0, "c1": c1, "fit": cal_fit}
+    return full, {"scale": a_scale, "fit": cal_fit}
 
 
 def main(y0=Y0, y1=Y1):
@@ -303,12 +306,11 @@ def main(y0=Y0, y1=Y1):
         if sex == 2:
             assert (s["mu1"] >= s["mu2"]).all(), "mu1 < mu2 somewhere"
     if cal["fit"]:
-        r = cal["fit"]
-        print(f"  pre-1951 men-alpha trend: alpha += {cal['c0']:.3f} + {cal['c1']:.4f}*(1951-y)  "
-              f"(delta {cal['c0'] + cal['c1'] * (BACK[0] - CAL[0]):.3f}@{CAL[0]} .. "
-              f"{cal['c0'] + cal['c1']:.3f}@1950), calibrated to ASS aggearn_tot")
+        r, k = cal["fit"], cal["scale"]
+        print(f"  pre-1951 men-alpha scale (per year, women fixed): "
+              f"k {min(k.values()):.3f}@{min(k, key=k.get)} .. {max(k.values()):.3f}@{max(k, key=k.get)}")
         print(f"  uncapped model/ASS over {CAL[0]}-{CAL[1]}: "
-              f"min {min(r.values()):.3f}  mean {np.mean(list(r.values())):.3f}  max {max(r.values()):.3f}")
+              f"min {min(r.values()):.4f}  mean {np.mean(list(r.values())):.4f}  max {max(r.values()):.4f}")
 
 if __name__ == "__main__":
     kw = {}

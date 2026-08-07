@@ -66,7 +66,7 @@ and constraining after smoothing breaks the smoothness. Per year:
 
 - **stage 0** multi-start MLE per cell, keep top-K=3 optima **deduped in g-space**, not θ-space.
 - **Ω, ρ frozen once, globally** from the stage-0 fits: `Ω_j = 1/MAD[(Dg)_j]²` per sex, and
-  `ρ₀` scaled so the penalty is ~1% of the fit (`SMOOTH_FRAC`). ρ is in per-observation units,
+  `ρ₀` scaled by `SMOOTH_FRAC` off the fit magnitude. ρ is in per-observation units,
   multiplied by the year's `ntot` inside the solve since the fitters minimize a *sum*.
 - **stage 1** Viterbi basin selection along age (exact over consecutive triples, K² states).
 - **stage 2** ρ-continuation (graduated non-convexity), Gauss–Seidel passes alternating direction.
@@ -108,6 +108,16 @@ and `smooth_pen=(wvec, g_target)`. Two performance/robustness details that matte
 Warm inner-loop solves use loose L-BFGS tolerances (`WARM_OPTS`); cold multi-starts use
 `COLD_OPTS`. Parallelism is across years (`ProcessPoolExecutor`, BLAS pinned to one thread).
 
+**Runtime** ≈ **6 min** at `--jobs 8` (stage 0 ≈ 27 s; the joint solve ≈ 340 s wall / 2400 s CPU).
+The tight-cap years (1951–56) are slowest, ~80 s each: heavy censoring means a flat likelihood and
+more η iterations. That ~6 min is close to the *converged* cost, not a corner-cut — `GS_TOL` stops
+a sweep once nothing moves and the η search exits at `MOMENT_TOL`, so extra passes mostly idle.
+`XS_CONT_PASSES` / `XS_ETA_PASSES` (env vars, defaults 2 / 3) raise the Gauss-Seidel effort;
+raising them to 3 / 4 costs only +13% for that reason. They are **environment** variables, not CLI
+flags, because the year workers are spawned and re-import the module, so globals rebound in
+`main()` never reach them. To actually buy quality, raise `K_CAND` (richer basin set for Viterbi)
+or `RHO_STEPS` — those change what is explored rather than how long it is polished.
+
 **Two properties of the constraint that are easy to get wrong:**
 
 - **η ≥ 0 (thinning only) — a mathematical fact, not a preference.** The term is `+η·w·E[X]`:
@@ -115,11 +125,43 @@ Warm inner-loop solves use loose L-BFGS tolerances (`WARM_OPTS`); cold multi-sta
   `E[X] ∝ 1/(α−1)` unbounded above, so the objective is **unbounded below** and every cell slams
   into the α floor at once (measured in 1990: aggregate goes from 0.96× benchmark at η=−0.05 to
   60,000× at η=−0.1). A year whose model mean is *below* the benchmark is therefore left alone.
-- **ρ is calibrated against that.** Smoothing pulls the fat-tail cells in, and since E[X] is convex
-  in α there, it biases the aggregate mean **down** (Jensen) — which η cannot undo, per the above.
-  `SMOOTH_FRAC = 3e-4` was picked off a measured path (table in the source) as the point where 82%
-  of the roughness is gone but the mean bias is only ~1%. Retune with `--rho`; judge on the
-  heatmaps plus the uncapped ratio in the validation figure.
+  In practice 38 of 56 years pin exactly (mean ratio 1.0000); the other 18 (1974–94) sit ~1.5% under.
+- **ρ is calibrated against that.** Smoothing shrinks the cross-cell dispersion of the log-scale g
+  slots, and E[X] is exponential in them, so by Jensen it biases the aggregate mean **down** —
+  which η cannot undo, per the above. So ρ must be small enough that the smoothed fit still
+  *overshoots*. `SMOOTH_FRAC = 1e-4` was chosen from a **5-point sweep of full re-solves**
+  (`output/cross_sections/rho_sweep_ass_tr_ratios.png`), which is also the recipe for retuning it:
+
+  | SMOOTH_FRAC | in-sample uncapped mean [min–max] |
+  |---|---|
+  | 3e-5 | 0.9915 [0.955–1.001] |
+  | **1e-4** | **0.9923 [0.967–1.002]** |
+  | 3e-4 | 0.9907 [0.965–1.001] |
+  | 1e-3 | 0.9852 [0.952–1.001] |
+  | 3e-3 | 0.9776 [0.920–1.001] |
+
+  1e-4 is an *interior* optimum (it beats less smoothing at 3e-5), so it is a real choice rather
+  than "as little smoothing as possible". ρ only moves the ratio in the 1974–94 η=0 band; elsewhere
+  the constraint pins the aggregate whatever ρ is. Retune with `--rho`, judging on the heatmaps plus
+  the uncapped ratio. **Note that a sweep leaves the canonical output CSVs holding the LAST ρ run** —
+  restore the chosen one before regenerating the heatmaps and the validation figure.
+
+**Stage 2** (`extrapolate_params.py`) is unchanged in structure — shapes frozen at the nearest data
+edge (2000–04 forward, 1951–55 backward), locations rigid-shifted by the published/projected wage
+index — with one calibration. The pre-1951 years are *before* the data, so they inherit the 1951–55
+tail unadjusted, which lands ~5% under the ASS benchmark. `calibrate_alpha_scale` fixes that with a
+**per-year multiplicative scale on men's α**, root-found so each year's uncapped mean matches
+exactly; women's parameters are held fixed and enter as an offset. One scalar against one published
+moment per year — exactly identified, and legitimate precisely because α is unidentified above the
+low pre-1951 cap. E[X] ∝ α/(α−1) is monotone in α, so unlike the in-sample η this direction is well
+posed **both** ways, and `k·α > 1` is enforced so every cell keeps a finite mean.
+
+Two caveats on that calibration, both visible in the validation figure: it makes pre-1951 *capped*
+earnings worse (~1.02 → ~1.07 at 1937), because under the very low pre-1951 cap most mass is above
+it, so moving α moves the capped mean too; and the implied k path is erratic (**1938 is a 10×
+outlier**, k=5.24 between neighbours of 0.49 and 0.78) because the wage index misses the 1938
+downturn and α, the only free parameter, absorbs the whole residual. If that matters, the residual
+belongs in the location (ν) rather than the tail.
 
 `extract_table_4B1.py` has flags: `--no-duckdb` (write CSV only), `--html/--out/--duckdb/--table`.
 
