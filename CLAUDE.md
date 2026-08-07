@@ -125,7 +125,7 @@ or `RHO_STEPS` — those change what is explored rather than how long it is poli
   `E[X] ∝ 1/(α−1)` unbounded above, so the objective is **unbounded below** and every cell slams
   into the α floor at once (measured in 1990: aggregate goes from 0.96× benchmark at η=−0.05 to
   60,000× at η=−0.1). A year whose model mean is *below* the benchmark is therefore left alone.
-  In practice 38 of 56 years pin exactly (mean ratio 1.0000); the other 18 (1974–94) sit ~1.5% under.
+  In practice most years pin exactly (mean ratio 1.0000); the rest sit slightly under.
 - **ρ is calibrated against that.** Smoothing shrinks the cross-cell dispersion of the log-scale g
   slots, and E[X] is exponential in them, so by Jensen it biases the aggregate mean **down** —
   which η cannot undo, per the above. So ρ must be small enough that the smoothed fit still
@@ -141,7 +141,7 @@ or `RHO_STEPS` — those change what is explored rather than how long it is poli
   | 3e-3 | 0.9776 [0.920–1.001] |
 
   1e-4 is an *interior* optimum (it beats less smoothing at 3e-5), so it is a real choice rather
-  than "as little smoothing as possible". ρ only moves the ratio in the 1974–94 η=0 band; elsewhere
+  than "as little smoothing as possible". ρ only moves the ratio in the η=0 years; elsewhere
   the constraint pins the aggregate whatever ρ is. Retune with `--rho`, judging on the heatmaps plus
   the uncapped ratio. **Note that a sweep leaves the canonical output CSVs holding the LAST ρ run** —
   restore the chosen one before regenerating the heatmaps and the validation figure.
