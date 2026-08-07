@@ -22,6 +22,10 @@ env/
 # Logs
 *.log
 
+# External replication packages (own git repos, multi-GB datastores) — clone/download
+# separately; e.g. the CMS (JF 2025) package used by code/dynamics.
+replication_repos/
+
 # Data and generated artifacts — large and/or regenerable, not version-controlled.
 # Rebuild the DB from raw_data with code/data_import/build_epuf_duckdb.sql
 # + code/data_import/extract_table_4B1.py.
