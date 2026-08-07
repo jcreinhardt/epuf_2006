@@ -72,7 +72,7 @@ from scipy.optimize import minimize
 
 import crosssec_fit as cf   # DB, SIG_MIN
 
-IN      = Path("output/cross_sections/cross_section_params_iterated.csv")
+IN      = Path("output/cross_sections/cross_section_params_smoothed.csv")
 OUT     = Path("output/cross_sections/cross_section_params_extrapolated.csv")
 TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
 ASS_XLSX = Path("raw_data/annual_statistical_supplement.xlsx")
@@ -238,12 +238,10 @@ def build(df, y0, y1):
     kept = {(int(r.sex), int(r.age), int(r.year)): r          # iterated cells to keep verbatim
             for r in df[df["year"] <= DATA_LAST].itertuples()}
 
-    # pre-1951 men's frozen tail (alpha<=1 for older men -- a censoring artifact of the low 1950s
-    # cap) implies an infinite uncapped mean; calibrate a uniform alpha trend to ASS aggearn_tot so
-    # the pre-1951 uncapped mean is right. Only runs when the target span reaches into the pre-1951 years.
+    # pre-1951 men-alpha trend RETIRED: stage 1's uncapped-mean penalty (mean_pen) now pins the
+    # tail at the source, so the 1951-55 backward anchor is already mean-correct -- no separate
+    # pre-1951 alpha calibration. (calibrate_alpha_trend + its ASS helpers are dead; removed in cleanup.)
     c0 = c1 = 0.0; cal_fit = {}
-    if int(y0) < BACK[0]:
-        c0, c1, cal_fit = calibrate_alpha_trend(anc_back, G, Gbar_back)
 
     rows = []
     for sex, (model, a_hi, locs, shapes) in SPEC.items():

@@ -61,7 +61,12 @@ WFLOOR    = 1e-6    # min self-weight so ridge cells (info~0) stay solvable, nei
 
 # men: (param column, info column, theta transform). women handle mu1/mu2 via the gap
 # reparameterization below; only these simple params go through the generic path.
-MEN   = [("alpha", "info_alpha", "log"), ("beta", "info_beta", "log"),
+# alpha is DELIBERATELY NOT smoothed: it is pinned in stage 1 by the uncapped-mean penalty
+# (mean_pen), which lives in alpha's near-flat likelihood direction. Smoothing it here -- weighted
+# by the pure-likelihood info_alpha, which reads that direction as unidentified -- would slide
+# alpha off the moment (eroding the mean) and, because E[X] ~ 1/(alpha-1) is hyper-sensitive near
+# the bound, a neighbour-pulled alpha ~= 1 blows the cell's mean up. So alpha passes through verbatim.
+MEN   = [("beta", "info_beta", "log"),
          ("nu", "info_nu", "id"),        ("tau", "info_tau", "log")]
 WOMEN_SIMPLE = [("sig1", "info_sig1", "logsig"), ("sig2", "info_sig2", "logsig"),
                 ("w", "info_w", "logit")]

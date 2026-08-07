@@ -25,6 +25,11 @@ SIG_MIN     = 0.20      # lower bound on each mixture sigma: stops a component c
                         # a data-heaping spike (a round-earnings pile-up in sparse pre-1980
                         # retirement cells) -- the source of the sigma1/w basin ambiguity.
                         # Only ~1% of cells (all at the age extremes) ever push against it.
+SIG_MAX     = 2.5       # upper bound on each mixture sigma: the mirror guard. Without it a minority
+                        # component in a sparse old-age cell runs to sigma~12 (mu at its bound), and
+                        # exp(mu+sigma^2/2) makes E[X] explode (~1e38); the pure-smoothing stage can
+                        # soften but not undo that, so a single cell can dominate a year's uncapped
+                        # aggregate. 2.5 clips only ~15 cells (all pathological; real dispersion <~2).
 LOG2PI      = np.log(2 * np.pi)
 SQRT2, SQRT_HALF_PI = np.sqrt(2.0), np.sqrt(np.pi / 2.0)
 
@@ -113,7 +118,7 @@ def dpln_theta(r):                  # pack a fitted dPlN result into a warm-star
     return [np.log(r["alpha"]), np.log(r["beta"]), r["nu"], np.log(r["tau"])]
 
 
-def fit_dpln(x, lowc, highc, start=None, penalty=None):
+def fit_dpln(x, lowc, highc, start=None, penalty=None, mean_pen=None):
     """Fit the dPlN by censored MLE. `start` (a theta from dpln_theta) warm-starts
     the optimizer from a neighbouring cell as a single local solve; None runs a
     small multi-start -- the moment start plus a low- and a high-alpha seed that
@@ -125,8 +130,22 @@ def fit_dpln(x, lowc, highc, start=None, penalty=None):
     target_i)^2 (theta = [logα,logβ,ν,logτ]) to the objective -- the smoothness
     prior that keeps a weakly-identified parameter (the flat-ridge upper tail) on
     the neighbour line instead of being driven to a copied neighbour value by bare
-    keep-best. `negll`/`info_*` stay the PURE likelihood; `obj` is the penalized
-    value used for keep-best across warm starts."""
+    keep-best.
+
+    `mean_pen=(eta, w)` adds eta*w*E[X](theta) -- the ANALYTIC dPlN uncapped mean
+    dpln_mean -- to the objective: a one-sided downward pull on the upper tail that
+    constrains the (cap-censored, hence unidentified above the cap) mean toward the
+    published aggregate. eta is a SINGLE global weight, tuned once so the 1937-2004
+    ASS-vs-model aggregate lines up; w is the cell's per-worker share (n_cell /
+    year total), which makes the pull scale-free against the likelihood -- both grow
+    with n_cell, so the correction is information-routed (identified cells barely
+    move, censored flat-ridge cells thin) and uniform across cell sizes. No per-year
+    target and no per-year solve: a fixed eta makes the aggregate moment SEPARABLE
+    into an independent per-cell penalty, so it lives in the stage-1 fit. When set,
+    log-alpha is bounded so alpha>1 (finite mean).
+
+    `negll`/`info_*` stay the PURE likelihood; `obj` is the penalized value used for
+    keep-best across warm starts."""
     yi, n_low, n_high = censor_split(x, lowc, highc)
     tlo, thi = np.log(lowc), np.log(highc)
 
@@ -137,12 +156,23 @@ def fit_dpln(x, lowc, highc, start=None, penalty=None):
               + n_high * np.log1p(-nl_cdf(thi, a, b, nu, tau)))
         return -ll if np.isfinite(ll) else 1e18
 
-    if penalty is None:
-        obj = negll
-    else:
-        t_t, lam = np.asarray(penalty[0], float), np.asarray(penalty[1], float)
-        def obj(theta):
-            return negll(theta) + float(np.dot(lam, (np.asarray(theta) - t_t) ** 2))
+    pen = None if penalty is None else (np.asarray(penalty[0], float),
+                                        np.asarray(penalty[1], float))
+
+    def obj(theta):
+        val = negll(theta)
+        if pen is not None:
+            val += float(np.dot(pen[1], (np.asarray(theta) - pen[0]) ** 2))
+        if mean_pen is not None:
+            eta, w = mean_pen
+            mth = dpln_mean(np.exp(theta[0]), np.exp(theta[1]), theta[2], np.exp(theta[3]))
+            if not np.isfinite(mth):
+                return 1e18
+            val += eta * w * mth
+        return val
+
+    bnds = ([(np.log(1.0 + 1e-3), None), (None, None), (None, None), (None, None)]
+            if mean_pen is not None else None)   # alpha>1 -> finite mean under the pull
 
     if start is not None:
         seeds = [start]
@@ -154,7 +184,7 @@ def fit_dpln(x, lowc, highc, start=None, penalty=None):
                  [np.log(30.0), 0.0, m, np.log(s)]]             # high-alpha ridge
     res = None
     for seed in seeds:
-        r = minimize(obj, seed, method="L-BFGS-B")
+        r = minimize(obj, seed, method="L-BFGS-B", bounds=bnds)
         if res is None or r.fun < res.fun:
             res = r
     a, b, nu, tau = np.exp(res.x[0]), np.exp(res.x[1]), res.x[2], np.exp(res.x[3])
@@ -175,6 +205,19 @@ def dpln_mean(a, b, nu, tau):
     if not (a > 1.0):
         return np.inf
     return np.exp(nu + tau * tau / 2.0) * (a * b) / ((a - 1.0) * (b + 1.0))
+
+
+def dpln_var(a, b, nu, tau):
+    """Analytic UNCAPPED variance of the dPlN, from the moment formula
+    E[X^s] = exp(s*nu + s^2*tau^2/2) * a*b / ((a-s)(b+s)) for s < a. INFINITE where a<=2
+    (the second moment diverges). Used only to seed the per-year multiplier search with the
+    Gaussian starting guess lambda0 = gap / (weighted-average variance); heavy-tail cells
+    (a<=2) return inf, which the caller treats as 'no usable local slope' and falls back."""
+    if not (a > 2.0):
+        return np.inf
+    m1 = np.exp(nu + tau * tau / 2.0) * (a * b) / ((a - 1.0) * (b + 1.0))
+    m2 = np.exp(2.0 * nu + 2.0 * tau * tau) * (a * b) / ((a - 2.0) * (b + 2.0))
+    return float(m2 - m1 * m1)
 
 
 def dpln_negll(x, lowc, highc, a, b, nu, tau):
@@ -294,8 +337,8 @@ def fit_mixture(x, lowc, highc, start=None, penalty=None):
 
     # bound each log-sigma theta so sigma = SIG_FLOOR + exp(ls) >= SIG_MIN: forbids the
     # heaping-spike basin without touching the ~99% of cells that sit well above the floor.
-    lo = np.log(SIG_MIN - SIG_FLOOR)
-    bnds = [(4.0, 13.0), (4.0, 13.0), (lo, None), (lo, None), (None, None)]  # mu in a sane
+    lo, hi = np.log(SIG_MIN - SIG_FLOOR), np.log(SIG_MAX - SIG_FLOOR)   # sigma in [SIG_MIN, SIG_MAX]
+    bnds = [(4.0, 13.0), (4.0, 13.0), (lo, hi), (lo, hi), (None, None)]  # mu in a sane
     #   log-earnings range so a near-empty minority component can't run off to +/-100; then
     #   its info -> 0 and the stage-1.5 penalty cleanly pulls it onto the neighbour line.
     if start is not None:
