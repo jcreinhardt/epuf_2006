@@ -207,19 +207,6 @@ def dpln_mean(a, b, nu, tau):
     return np.exp(nu + tau * tau / 2.0) * (a * b) / ((a - 1.0) * (b + 1.0))
 
 
-def dpln_var(a, b, nu, tau):
-    """Analytic UNCAPPED variance of the dPlN, from the moment formula
-    E[X^s] = exp(s*nu + s^2*tau^2/2) * a*b / ((a-s)(b+s)) for s < a. INFINITE where a<=2
-    (the second moment diverges). Used only to seed the per-year multiplier search with the
-    Gaussian starting guess lambda0 = gap / (weighted-average variance); heavy-tail cells
-    (a<=2) return inf, which the caller treats as 'no usable local slope' and falls back."""
-    if not (a > 2.0):
-        return np.inf
-    m1 = np.exp(nu + tau * tau / 2.0) * (a * b) / ((a - 1.0) * (b + 1.0))
-    m2 = np.exp(2.0 * nu + 2.0 * tau * tau) * (a * b) / ((a - 2.0) * (b + 2.0))
-    return float(m2 - m1 * m1)
-
-
 def dpln_negll(x, lowc, highc, a, b, nu, tau):
     """Doubly-censored dPlN negative log-likelihood at a given parameter vector -- the pure
     fit measure (no penalties), used to price the fit cost of the mean-moment match."""
@@ -303,21 +290,31 @@ def mix_theta(r):                   # pack a fitted mixture result into a warm-s
 
 
 def mix_mean(mu1, mu2, s1, s2, w):
-    """Analytic UNCAPPED mean of the two-component lognormal mixture -- always finite, so the
-    women's cells need no tail correction; they enter the moment match as a fixed offset."""
+    """Analytic UNCAPPED mean of the two-component lognormal mixture -- always finite. Under a
+    tight cap women are heavily top-coded too, so their censored fit can still overshoot; the
+    per-year moment match carries the women's cells (mean_pen in fit_mixture) alongside the men's."""
     return w * np.exp(mu1 + s1 * s1 / 2.0) + (1 - w) * np.exp(mu2 + s2 * s2 / 2.0)
 
 
-def fit_mixture(x, lowc, highc, start=None, penalty=None):
+def fit_mixture(x, lowc, highc, start=None, penalty=None, mean_pen=None):
     """Fit the lognormal mixture by censored MLE. `start` (a theta from mix_theta)
     warm-starts from a neighbouring cell as a single local optimisation; None runs
     the deterministic 6-point restart grid.
 
     `penalty=(target, lam)` adds Sum lam_i (theta_i - target_i)^2 (theta =
     [μ1,μ2,logσ1',logσ2',logit w]) to the objective -- the smoothness prior toward
-    the neighbour line. `negll`/`info_*` stay the PURE likelihood; `obj` is the
-    penalized value for keep-best. The target is in the mean-ordered convention
-    (component 1 = higher mean), matching the relabelling below."""
+    the neighbour line. The target is in the mean-ordered convention (component 1 =
+    higher mean), matching the relabelling below.
+
+    `mean_pen=(eta, w)` adds eta*w*E[X](theta) -- the ANALYTIC mixture uncapped mean
+    mix_mean -- to the objective, the SAME per-year multiplier the men's dPlN cells
+    carry (see fit_dpln): under a tight cap women are also heavily top-coded, so their
+    censored minority component inflates (sigma runs to SIG_MAX); the shared eta thins
+    that unidentified tail exactly as it thins the men's, so both sexes are pulled onto
+    the published aggregate jointly rather than loading the whole correction onto men.
+
+    `negll`/`info_*` stay the PURE likelihood; `obj` is the penalized value for
+    keep-best."""
     yi, n_low, n_high = censor_split(x, lowc, highc)
     tlo, thi = np.log(lowc), np.log(highc)
 
@@ -328,12 +325,17 @@ def fit_mixture(x, lowc, highc, start=None, penalty=None):
               + n_high * np.log(mix_sf(thi, *p)))
         return -ll if np.isfinite(ll) else 1e18
 
-    if penalty is None:
-        obj = negll
-    else:
-        t_t, lam = np.asarray(penalty[0], float), np.asarray(penalty[1], float)
-        def obj(theta):
-            return negll(theta) + float(np.dot(lam, (np.asarray(theta) - t_t) ** 2))
+    pen = None if penalty is None else (np.asarray(penalty[0], float),
+                                        np.asarray(penalty[1], float))
+
+    def obj(theta):
+        val = negll(theta)
+        if pen is not None:
+            val += float(np.dot(pen[1], (np.asarray(theta) - pen[0]) ** 2))
+        if mean_pen is not None:
+            eta, w = mean_pen
+            val += eta * w * mix_mean(*_unpack(theta))
+        return val
 
     # bound each log-sigma theta so sigma = SIG_FLOOR + exp(ls) >= SIG_MIN: forbids the
     # heaping-spike basin without touching the ~99% of cells that sit well above the floor.

@@ -104,14 +104,25 @@ def _fit_cells(by_age, fit, pack, highc, mean_pen_of=None):
     return out
 
 
+def _cell_mean(sex, r):
+    """Analytic UNCAPPED mean E[X] of a fitted cell, by model."""
+    if sex == 1:
+        return cf.dpln_mean(r["alpha"], r["beta"], r["nu"], r["tau"])
+    return cf.mix_mean(r["mu1"], r["mu2"], r["sig1"], r["sig2"], r["w"])
+
+
 def fit_year(year, target_unc=None):
     """Fit every qualifying (sex, age) cell for one year, matching the year's UNCAPPED aggregate
-    mean to the ASS target. The moment couples the men cells only through the scalar aggregate
-    S = sum_c w_c E[X]_c, so the joint fit decomposes (dual/rank-1): condition on ONE multiplier
-    eta and each men cell solves independently  min negll_c + eta*w_c*E[X]_c  (fit_dpln mean_pen);
-    an outer 1-D root-find sets eta so S = target. eta>=0 only THINS an over-heavy censored tail,
+    mean to the ASS target. The moment couples ALL cells -- men and women, both sexes -- only
+    through the scalar aggregate S = sum_c w_c E[X]_c, so the constrained fit decomposes
+    (dual/rank-1, per the mean-constrained-MLE skill): condition on ONE multiplier eta and each
+    cell solves independently  min negll_c + eta*w_c*E[X]_c  (fit_dpln / fit_mixture mean_pen);
+    an outer 1-D root-find sets eta so S = target. eta>=0 only THINS an over-heavy censored tail
     and is 0 where the model does not overshoot (high-cap years), so well-fit years are untouched.
-    Women (finite mixture mean) are unpenalized and enter as the fixed offset S_women."""
+
+    Both sexes carry the SAME eta: under a tight cap women are also 15-25% top-coded (1951-65),
+    so a men-only correction over-thins the men to absorb women's inflated censored tail. The
+    joint multiplier thins each sex's unidentified tail in proportion to its own overshoot."""
     df = load_year(year)
     highc = float(df["earnings"].max()) - cf.HIGH_MARGIN   # taxmax(year) - margin
     lo_a, hi_a = MATCH_AGES
@@ -124,61 +135,54 @@ def fit_year(year, target_unc=None):
     # cells are ~9% of cells but ~0.6-1% of workers -- and the moment match would miss by that gap.)
     ntot = sum(x.size for sex in SEX for a, x in by_age[sex].items() if lo_a <= a <= hi_a)
     in_win = lambda a: lo_a <= a <= hi_a and ntot > 0
+    w_of = {sex: {a: by_age[sex][a].size / ntot for a in by_age[sex]} for sex in SEX}
+    ages_win = {sex: [a for a in sorted(by_age[sex]) if in_win(a)] for sex in SEX}
 
-    # ---- women: plain censored MLE; accumulate their fixed uncapped-mean contribution ----
-    women = _fit_cells(by_age[2], cf.fit_mixture, cf.mix_theta, highc)
-    s_women = sum((by_age[2][a].size / ntot) *
-                  cf.mix_mean(r["mu1"], r["mu2"], r["sig1"], r["sig2"], r["w"])
-                  for a, r in women.items() if in_win(a))
+    # ---- bounded base fit at eta=0 for both sexes (men's alpha>1 -> finite E[X]) ----
+    base = {sex: _fit_cells(by_age[sex], SEX[sex][1], SEX[sex][2], highc,
+                            mean_pen_of=lambda a, s=sex: (0.0, w_of[s][a]))
+            for sex in SEX}
 
-    # ---- men: bounded base fit (eta=0), then the per-year eta that matches the aggregate ----
-    w_of = {a: by_age[1][a].size / ntot for a in by_age[1]}
-    base = _fit_cells(by_age[1], cf.fit_dpln, cf.dpln_theta, highc,
-                      mean_pen_of=lambda a: (0.0, w_of[a]))   # eta=0 -> bounded MLE (alpha>1), finite E[X]
-    ages_win = [a for a in sorted(by_age[1]) if in_win(a)]
+    def s_full(fits):                      # composition-weighted uncapped mean over in-window cells
+        return sum(w_of[sex][a] * _cell_mean(sex, fits[sex][a])
+                   for sex in SEX for a in ages_win[sex])
 
-    def s_men(fits):
-        return sum(w_of[a] * cf.dpln_mean(fits[a]["alpha"], fits[a]["beta"],
-                                          fits[a]["nu"], fits[a]["tau"]) for a in ages_win)
-
-    base_theta = {a: cf.dpln_theta(base[a]) for a in ages_win}
-    def refit(eta):                        # in-window men refit at eta, from the FIXED base start so
-        f = dict(base)                     # refit(.) is a pure function of eta (brentq needs that);
-        for a in ages_win:                 # warm-chaining the start would make refit(0) path-dependent
-            f[a] = cf.fit_dpln(by_age[1][a], cf.LOWC, highc,
-                               start=base_theta[a], mean_pen=(eta, w_of[a]))
+    base_theta = {sex: {a: SEX[sex][2](base[sex][a]) for a in ages_win[sex]} for sex in SEX}
+    def refit(eta):                        # in-window cells refit at eta, from the FIXED base start so
+        f = {sex: dict(base[sex]) for sex in SEX}   # refit(.) is a pure function of eta (brentq needs
+        for sex in SEX:                             # that); warm-chaining would make refit(0) path-
+            for a in ages_win[sex]:                 # dependent through the near-flat censored tail
+                f[sex][a] = SEX[sex][1](by_age[sex][a], cf.LOWC, highc,
+                                        start=base_theta[sex][a], mean_pen=(eta, w_of[sex][a]))
         return f
 
-    eta, men = 0.0, base
-    T_men = (target_unc - s_women) if target_unc is not None else None
-    if T_men is not None and ages_win and s_men(base) > T_men > 0:    # overshoot -> thin to target
-        # Gaussian/Newton seed (mean-constrained-MLE skill): linearize S(eta) at eta=0, where
-        # dS/deta = -(1/ntot) sum_c w_c Var_c, giving eta0 = ntot * gap / sum_c w_c Var_c from the
-        # unconstrained (eta=0) fits. It lands us near the root in the mild-overshoot case; heavy
-        # dPlN tails (alpha<=2) have infinite Var (no local slope) -> fall back to eta0=1 and let the
-        # x4 growth climb. The grow-then-brentq envelope below is correct regardless of the seed.
-        denom = sum(w_of[a] * cf.dpln_var(base[a]["alpha"], base[a]["beta"],
-                                          base[a]["nu"], base[a]["tau"]) for a in ages_win)
-        eta0 = ntot * (s_men(base) - T_men) / denom if np.isfinite(denom) and denom > 0 else 1.0
+    eta, fits = 0.0, base
+    any_win = ages_win[1] or ages_win[2]
+    S0 = s_full(base)
+    if target_unc is not None and any_win and S0 > target_unc > 0:    # overshoot -> thin to target
+        # log-secant seed: the censored tail thins ~exponentially in eta, so log S(eta) is
+        # near-linear; probe S(1) and interpolate log S from (0,S0),(1,S1) to the target. Works
+        # under heavy tails (needs no finite variance, unlike the Gaussian seed). The grow-then-
+        # brentq envelope below is correct regardless of the seed, so a rough seed just saves probes.
+        S1 = s_full(refit(1.0))
+        eta0 = np.log(target_unc / S0) / np.log(S1 / S0) if S1 < S0 else 1.0
         hi = float(np.clip(eta0, 0.1, ETA_HI))
-        s_hi = s_men(refit(hi))
-        while s_hi > T_men and hi < ETA_HI:                           # seed too low -> grow bracket
+        s_hi = s_full(refit(hi))
+        while s_hi > target_unc and hi < ETA_HI:                      # seed too low -> grow bracket
             hi *= 4.0
-            s_hi = s_men(refit(hi))
-        if s_hi > T_men:              # target sits below the tail-free body floor -> thin maximally
+            s_hi = s_full(refit(hi))
+        if s_hi > target_unc:         # target sits below the tail-free body floor -> thin maximally
             eta = hi
         else:                         # S(eta) monotone decreasing: brentq on the scalar residual
-            eta = brentq(lambda e: s_men(refit(e)) - T_men, 0.0, hi,
+            eta = brentq(lambda e: s_full(refit(e)) - target_unc, 0.0, hi,
                          xtol=1e-4, rtol=MOMENT_TOL, maxiter=60)
-        men = refit(eta)
+        fits = refit(eta)
 
     rows = []
-    for a, r in men.items():
-        r.update(year=year, sex=1, age=int(a), lowc=cf.LOWC, highc=highc, eta_year=eta)
-        rows.append(r)
-    for a, r in women.items():
-        r.update(year=year, sex=2, age=int(a), lowc=cf.LOWC, highc=highc, eta_year=0.0)
-        rows.append(r)
+    for sex in SEX:
+        for a, r in fits[sex].items():
+            r.update(year=year, sex=sex, age=int(a), lowc=cf.LOWC, highc=highc, eta_year=eta)
+            rows.append(r)
     return year, rows
 
 
