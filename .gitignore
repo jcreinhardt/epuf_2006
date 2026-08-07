@@ -33,3 +33,11 @@ output/**
 !processed_data/.gitkeep
 !output/**/
 !output/**/.gitkeep
+
+# LaTeX build products — the deck is regenerable from its .tex (xelatex, run twice)
+presentation/*.pdf
+presentation/*.aux
+presentation/*.nav
+presentation/*.out
+presentation/*.snm
+presentation/*.toc

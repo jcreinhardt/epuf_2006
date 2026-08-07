@@ -1,0 +1,242 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+
+% ----------------------------------------------------------------------
+% Earnings Team --- 08/11/2026
+% Cross-sectional earnings estimation: replacing the old procedure
+%
+% Compile with XeLaTeX (metropolis + Fira Sans):
+%   xelatex earnings_team_2025_08_11.tex
+% ----------------------------------------------------------------------
+
+\usetheme{metropolis}
+\metroset{progressbar=frametitle, numbering=fraction, block=fill}
+
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+
+% --- lightweight placeholder box for figures we haven't dropped in yet ---
+% Usage: \figph{width}{height}{caption text}
+\newcommand{\figph}[3]{%
+  \begin{tikzpicture}
+    \draw[draw=mDarkTeal!35,fill=mDarkTeal!5,line width=0.6pt,rounded corners=2pt]
+      (0,0) rectangle (#1,#2);
+    \node[mDarkTeal!60,align=center,font=\small\itshape] at (#1/2,#2/2) {#3};
+  \end{tikzpicture}%
+}
+
+\newcommand{\LOWC}{c_{\text{lo}}}
+\newcommand{\HIGHC}{c_{\text{hi}}}
+\newcommand{\negll}{\operatorname{negll}}
+
+\title{Cross-Sectional Earnings Estimation}
+\subtitle{Earnings Team}
+\date{August 11, 2026}
+
+\begin{document}
+
+\maketitle
+
+% ======================================================================
+% Slide 1 --- What changed and why
+% ======================================================================
+\begin{frame}{We replaced the cross-sectional earnings estimation procedure}
+  \begin{itemize}
+    \item The previous pipeline stitched together \textbf{many data sources with very
+          different underlying samples}.
+    \item Reconciling those samples introduced more error than it removed: the seams
+          between sources dominated the results.
+    \item \textbf{New approach:} use \alert{SSA microdata only}, fit the covered years
+          directly, and \textbf{extrapolate parameters} to the non-covered years.
+    \item Cleaner inputs, one consistent sample, and demonstrably better fits.
+  \end{itemize}
+  \vfill
+  \begin{columns}[c]
+    \begin{column}{0.48\textwidth}\centering
+      \figph{5.0}{2.7}{Old procedure\\(multi-source)}
+
+      {\footnotesize Old: many samples stitched together}
+    \end{column}
+    \begin{column}{0.48\textwidth}\centering
+      \figph{5.0}{2.7}{New procedure\\(SSA microdata only)}
+
+      {\footnotesize New: single sample + extrapolation}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ======================================================================
+% Slide 2 --- Broad idea
+% ======================================================================
+\begin{frame}{Broad idea}
+  \begin{enumerate}
+    \item Fit \textbf{parametric distributions} to earnings cross sections from the
+          \textbf{1951--2006 SSA public-use file}.
+    \item \textbf{Extrapolate} the parameter surfaces to the non-covered years:
+          backward to \textbf{1937--1950}, forward to \textbf{2006--2100}.
+    \item Later, combine with the \textbf{Guvenen / CMS process} for earnings
+          \textbf{dynamics}, linking cross sections to the panel process through an
+          \textbf{ordinal (rank-preserving) transform}.
+  \end{enumerate}
+  \vfill
+  \begin{center}
+  \begin{tikzpicture}[node distance=6mm,
+      every node/.style={font=\footnotesize,align=center,draw,rounded corners,
+                         inner sep=4pt,draw=mDarkTeal!40}]
+    \node[fill=mDarkTeal!5] (a) {1937--1950\\\scriptsize extrapolated};
+    \node[fill=mLightBrown!25,right=of a] (b) {1951--2006\\\scriptsize fitted};
+    \node[fill=mDarkTeal!5,right=of b] (c) {2006--2100\\\scriptsize extrapolated};
+    \node[fill=white,right=10mm of c] (d) {+ dynamics\\\scriptsize ordinal transform};
+    \draw[->,draw=mDarkTeal] (a)--(b);
+    \draw[->,draw=mDarkTeal] (b)--(c);
+    \draw[->,dashed,draw=mDarkTeal] (c)--(d);
+  \end{tikzpicture}
+  \end{center}
+\end{frame}
+
+% ======================================================================
+% Slide 3 --- Step 1, the estimator
+% ======================================================================
+\begin{frame}{Step 1 --- one joint smoothed-constrained MLE}
+  Fit a \textbf{dPLN} (men) / \textbf{lognormal mixture} (women) per
+  $(\text{year},\text{sex},\text{age})$ \textbf{cell} $c$ with the \textbf{doubly Type-I
+  censored} likelihood: top-coded at $\HIGHC=\text{taxmax}-\$1000$, bottom at $\LOWC=\$200$.
+  \begin{itemize}
+    \item[(a)] \emph{Regime switching:} the likelihood is nearly flat in level across two very
+          different parameter values (dPLN tail index, the mixture's component swaps)
+          $\Rightarrow$ \alert{borrow strength across neighbouring ages}.
+    \item[(b)] \emph{Heavy early censoring:} $\sim$40--45\% top-coded parks the fit on an
+          $\alpha\!\le\!1$ (\emph{infinite}-mean) tail $\Rightarrow$ \alert{pin the year's
+          uncapped mean} to the published ASS benchmark.
+  \end{itemize}
+  \vfill
+  Both are solved \textbf{together}, in \textbf{one} problem per \textbf{year} $k$ over
+  \textbf{both sexes'} cells:
+  {\small
+  \[
+    \min_{\{\theta_c\}}\ \sum_{c\in k}\negll_c(\theta_c)
+      \ +\ \rho\sum_{s}\sum_{a}\sum_{j} h_\kappa\!\Bigl(\sqrt{\Omega_j}\,
+        \bigl[\Delta^2 g(\theta_{s,a})\bigr]_j\Bigr)
+    \quad\text{s.t.}\quad
+    \sum_{c\in k} w_c\,\mathbb{E}_{\theta_c}[X]\ =\ m_k
+  \]}%
+
+  \vspace{-2pt}
+  {\footnotesize Sequential passes fail both ways --- smooth-then-constrain breaks the
+  constraint (measured: $\sim$7\%), constrain-then-smooth breaks it too. $w_c$ = cell share of
+  the year's workers (ages 15--77); $m_k$ = ASS \texttt{aggearn\_tot/num\_wrk}.\par}
+\end{frame}
+
+% ======================================================================
+% Slide 4 --- the two design choices
+% ======================================================================
+\begin{frame}{Step 1 --- the two choices that make it work}
+  \textbf{1. Penalize \alert{functionals} $g(\theta)$, not raw parameters.} Raw parameters flip
+  meaning across the mixture's component swaps and the dPLN's body/tail trades, so a penalty on
+  $\theta$ is silent about exactly the regime flips it is meant to fix. Six \textbf{regime-invariant}
+  slots, one layout for both sexes:
+  {\small
+  \[
+    g(\theta)=\bigl[\ \mathbb{E}\log Y,\ \ \mathrm{sd}\log Y,\ \ \mathrm{skew}\log Y,\ \
+      \operatorname{logit}S(\text{cap}),\ \ \log\beta,\ \ \log\alpha\ \bigr]
+  \]}%
+  \vspace{-6pt}
+
+  All six are \textbf{closed form}, so $g$ is cheap enough to evaluate inside \emph{every}
+  objective call. Skew is not optional: it separates ``dispersed body, thin tail'' from ``tight
+  body, fat tail'' --- the competing basins.
+
+  \medskip
+  \textbf{2. A \alert{robust (Huber)} second difference along age.} $\Delta^2$ leaves a
+  \emph{linear} age profile unpenalized; the Huber knee lets a genuine \textbf{isolated} regime
+  jump (retirement, young-age entry) through at $\sim$linear cost instead of smearing it, and is
+  \textbf{location-free} --- so the year-varying retirement age needs \textbf{no cutoff}.
+
+  \smallskip
+  {\footnotesize $\Omega_j = 1/\operatorname{MAD}_a[(\Delta^2 g)_j]^2$ and $\rho$ are frozen
+  \emph{once, globally} from the unsmoothed fits.\par}
+\end{frame}
+
+% ======================================================================
+% Slide 5 --- how it is solved
+% ======================================================================
+\begin{frame}{Step 1 --- how it is solved}
+  Per year (years are independent $\Rightarrow$ run in parallel):
+  \begin{enumerate}
+    \item[\textbf{0.}] \textbf{Multi-start} MLE per cell; keep top-$K$ optima, deduped
+      \textbf{in $g$-space}.
+    \item[\textbf{1.}] \textbf{Viterbi} basin selection along age --- pick the \emph{combination}
+      maximizing fit minus roughness, not the cell-by-cell argmax.
+    \item[\textbf{2.}] \textbf{$\rho$-continuation} (graduated non-convexity): start smooth, step
+      down, warm-started Gauss--Seidel sweeps.
+    \item[\textbf{3.}] \textbf{$\eta$ search} --- with the smoothing \alert{inside} the loop.
+    \item[\textbf{4.}] \textbf{Re-check basins} at the converged $\eta$; re-seed only if a cell moved.
+  \end{enumerate}
+  \vfill
+  \textbf{Why $\eta\ge 0$ is a theorem, not a preference.} The term is $+\eta\,w\,\mathbb{E}[X]$:
+  for $\eta>0$ it is bounded below, so thinning has an interior optimum. For $\eta<0$ it rewards
+  larger $\mathbb{E}[X]$ \emph{linearly} while $\mathbb{E}[X]\sim(\alpha-1)^{-1}$ explodes --- no
+  interior optimum, and every cell hits the $\alpha$ floor at once. So a year sitting \emph{below}
+  the benchmark is left alone; the fix is \textbf{less smoothing}, not a negative multiplier.
+\end{frame}
+
+% ======================================================================
+% Slide 5 --- Steps 2 and 3
+% ======================================================================
+\begin{frame}{Steps 2 \& 3 --- extrapolate, then aggregate}
+  \textbf{Step 2 --- extrapolate off the data edges} (anchor + wage index):
+  \begin{itemize}
+    \item \textbf{Freeze the shape parameters} at the \textbf{nearest} data edge --- the
+      2000--04 average going forward, the \textbf{1951--55} average going back. They carry no
+      secular trend, so holding them fixed is the honest prior.
+    \item Drive the \textbf{location} parameters with an external \textbf{nominal wage-growth}
+      series (observed, then projected) rather than a free linear-in-year slope.
+    \item \emph{Exception:} men's pre-1951 $\alpha$ is itself a censoring artifact, so it is
+      \textbf{calibrated} --- a 2-parameter linear-in-year trend fit to the ASS uncapped mean
+      over 1937--1950, since $\alpha$ is unidentified above the cap.
+  \end{itemize}
+  \vfill
+  \textbf{Step 3 --- aggregate:} combine the parameter surfaces with \textbf{gender shares} and
+  \textbf{total population (projections)} to compute \textbf{aggregate taxable-income totals},
+  validated against ASS + Trustees Report, capped \emph{and} uncapped.
+\end{frame}
+
+% ======================================================================
+% Slide 6 --- Raw parameter estimates
+% ======================================================================
+\begin{frame}{Raw parameter estimates}
+  \begin{center}
+    \figph{11.0}{5.0}{Raw per-cell parameter surfaces\\(cohort $\times$ age heatmaps, by sex)}
+  \end{center}
+  \begin{center}\footnotesize
+    Stage-0 per-cell MLE --- note the regime-switching noise across adjacent cells.
+  \end{center}
+\end{frame}
+
+% ======================================================================
+% Slide 7 --- Smoothed parameter estimates
+% ======================================================================
+\begin{frame}{Smoothed parameter estimates}
+  \begin{center}
+    \figph{11.0}{5.0}{Smoothed parameter surfaces\\(penalized + mean-constrained)}
+  \end{center}
+  \begin{center}\footnotesize
+    After the joint solve --- roughness penalty and mean constraint applied \emph{together};
+    coherent surfaces, realistic tails.
+  \end{center}
+\end{frame}
+
+% ======================================================================
+% Slide 8 --- Implied aggregate totals
+% ======================================================================
+\begin{frame}{Implied aggregate totals vs.\ ASS / TR}
+  \begin{center}
+    \figph{11.0}{5.0}{Model-implied aggregate taxable totals\\vs.\ ASS / Trustees Report totals}
+  \end{center}
+  \begin{center}\footnotesize
+    End-to-end validation: extrapolated model vs.\ published totals, capped and uncapped.
+  \end{center}
+\end{frame}
+
+\end{document}
