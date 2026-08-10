@@ -53,20 +53,26 @@ SEXLABEL  = {1: "men (double Pareto-lognormal)", 2: "women (two-component lognor
 FILETAG   = {1: "men", 2: "women"}
 
 
-def heatmap(ax, piv, cmap, logcolor):
-    """Draw one cohort(x) x age(y) heatmap; robust 2-98 pct color limits."""
+def heatmap(ax, piv, cmap, logcolor, lims=None):
+    """Draw one cohort(x) x age(y) heatmap; robust 2-98 pct color limits.
+
+    `lims=(vmin, vmax)` overrides those limits -- needed when two figures are meant to be
+    compared panel by panel (raw vs smoothed), where per-figure limits would rescale the
+    colors and make the comparison meaningless."""
     cohorts = piv.columns.to_numpy(dtype=float)
     ages    = piv.index.to_numpy(dtype=float)
     Z = np.ma.masked_invalid(piv.to_numpy(dtype=float))
 
     finite = Z.compressed()
-    if logcolor and finite.size and np.nanmin(finite) > 0:
-        norm = matplotlib.colors.LogNorm(vmin=np.nanpercentile(finite, 2),
-                                         vmax=np.nanpercentile(finite, 98))
-        kw = dict(norm=norm)
+    if lims is not None:
+        vmin, vmax = lims
+    elif finite.size:
+        vmin, vmax = np.nanpercentile(finite, 2), np.nanpercentile(finite, 98)
     else:
-        vmin, vmax = (np.nanpercentile(finite, 2), np.nanpercentile(finite, 98)) \
-            if finite.size else (None, None)
+        vmin = vmax = None
+    if logcolor and finite.size and np.nanmin(finite) > 0:
+        kw = dict(norm=matplotlib.colors.LogNorm(vmin=vmin, vmax=vmax))
+    else:
         kw = dict(vmin=vmin, vmax=vmax)
 
     cm = matplotlib.colormaps[cmap].copy()
