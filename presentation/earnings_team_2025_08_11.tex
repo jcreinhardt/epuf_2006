@@ -105,28 +105,28 @@
   observations are censored:
   \vspace{-5pt}
   \[
-    \max_{\{\theta_c\}}\sum_{c\in k}\ell_c(\theta_c)
-    \ \ \text{s.t.}\ \ \sum_{c\in k}w_c\,\mathbb{E}_{\theta_c}[X]=m_k
-    \qquad\Longleftrightarrow\qquad
-    \min_{\theta_c}\ -\ell_c(\theta_c)+\eta_k\,w_c\,\mathbb{E}_{\theta_c}[X]
+    \operatorname*{arg\,max}_{\{\theta_c\},\,\eta_k}\ \sum_{c\in k}\ell_c(\theta_c)
+      -\eta_k\Bigl(\sum_{c\in k}w_c\,\mathbb{E}_{\theta_c}[X]-m_k\Bigr)
+    \;=\;
+    \operatorname*{arg\,max}_{\eta_k}\ \max_{\{\theta_c\}}\
+      \sum_{c\in k}\Bigl[\ell_c(\theta_c)-\eta_k\,w_c\,\mathbb{E}_{\theta_c}[X]\Bigr]
   \]
   \vspace{-13pt}
 
   \textbf{3. Regime switching} --- some ages have \textbf{two minima far apart in $\theta$ with
-  very similar likelihoods}; force consistency across age.
-  \begin{itemize}\itemsep0pt
-    \item Penalizing \textbf{functionals of the distribution} works better than raw parameters.
-  \end{itemize}
+  very similar likelihoods}. Penalize \textbf{functionals $g$ of the distribution} instead of
+  raw parameters:
   \vspace{-4pt}
   \[
-    \min_{\{\theta_c\}}\ \sum_{c\in k}\Bigl[-\ell_c(\theta_c)+\eta_k w_c\,\mathbb{E}_{\theta_c}[X]\Bigr]
-      \ +\ \rho\sum_{s,a}\sum_{j=1}^{6} h_\kappa\!\Bigl(\sqrt{\Omega_j}\,
-        \bigl[\Delta^2 g(\theta_{s,a})\bigr]_j\Bigr)
+    \min_{\{\theta_c\}}\ \sum_{c\in k}\Bigl[-\ell_c(\theta_c)
+      +\eta_k\,w_c\,\mathbb{E}_{\theta_c}[X]\Bigr]
+      \;+\;\rho\sum_{s}\bigl\|D\,G_s\,\Omega^{1/2}\bigr\|_F^2
   \]
   \vspace{-11pt}
 
   {\footnotesize $w_c=n_c/n_k$ (ages 15--77), $m_k=$ ASS \texttt{aggearn\_tot/num\_wrk};
-  $\Delta^2 g_{s,a}=g_{s,a+1}-2g_{s,a}+g_{s,a-1}$; $h_\kappa$ Huber, $\kappa=1.5$.\par}
+  rows of $G_s$: $g(\theta_{s,a})^{\top}$ by age; $D$ = second-difference matrix along age;
+  $\Omega^{1/2}=\operatorname{diag}\sqrt{\Omega_j}$.\par}
 \end{frame}
 
 % ======================================================================
