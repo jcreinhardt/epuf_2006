@@ -18,7 +18,7 @@ women's phantom component fleeing to mu2 ~ -300 -- don't flatten the scale and
 hide the structure everywhere else. Cells below the fit's MIN_N are absent from
 the CSV and render blank.
 
-  python code/cross_sections/param_visualization.py [men|women|both]
+  python code/cross_sections/plot_param.py [men|women|both]
     -> output/cross_sections/param_heatmaps_{men,women}.pdf (+ .png)
 """
 import sys

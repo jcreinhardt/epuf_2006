@@ -54,7 +54,7 @@ sys.path.insert(0, "code/cross_sections")   # run from project root, per repo co
 import numpy as np
 import pandas as pd
 import crosssec_fit as cf
-import param_visualization as pv
+import plot_param as pv
 
 YEARS      = range(1951, 2007)
 MIN_N      = 1000               # skip cells with fewer positive-earnings observations
@@ -114,7 +114,7 @@ def load_year(year):
 
 def ass_uncapped_target():
     """ASS average UNCAPPED earnings per covered worker ($/worker) per year -- the published
-    mean the censored MLE can't see (mass above the cap). Matches agg_tax_total_visualization."""
+    mean the censored MLE can't see (mass above the cap). Matches plot_agg_tax_total."""
     d = pd.read_excel(ASS_XLSX, sheet_name="data")
     tot = d["aggearn_tot_wage"].fillna(0) + d["aggearn_tot_se"].fillna(0)   # $M
     return {int(y): float(t) * 1e6 / (float(nw) * 1e3)

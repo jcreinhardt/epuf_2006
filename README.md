@@ -123,10 +123,9 @@ epuf_2006/
 │       ├── crosssec_fit.py                # shared (year, sex[, age]) fitters: dPlN (men) + lognormal mixture (women)
 │       ├── estimate_cross_sections.py     # stage 1: joint smoothed-constrained MLE → cross_section_params{,_smoothed}.csv
 │       ├── extrapolate_params.py          # stage 2: extrapolate off the data edges → cross_section_params_extrapolated.csv
-│       ├── cross_section_visualization.py # raw histogram + fitted density, one (age, cohort, sex) cell → output/cross_sections/
-│       ├── param_visualization.py         # cohort×age heatmaps of every fitted/smoothed parameter
-│       ├── plot_uncapped_mean_vs_ass.py   # in-sample constraint check: unconstrained vs constrained uncapped mean vs ASS
-│       └── agg_tax_total_visualization.py # aggregate earnings, capped + uncapped: extrapolated model vs EPUF vs ASS+TR
+│       ├── plot_cross_section.py          # raw histogram + fitted density, one (age, cohort, sex) cell → output/cross_sections/
+│       ├── plot_param.py                  # cohort×age heatmaps of every fitted/smoothed parameter
+│       └── plot_agg_tax_total.py          # aggregate earnings, capped + uncapped: extrapolated model vs EPUF vs ASS+TR
 ├── processed_data/
 │   └── ssa.duckdb                     # shared DB: demographic + annual + supplement_4b1 (~1.6 GB)
 └── output/                            # generated artifacts (regenerable; not version-controlled)
@@ -282,9 +281,9 @@ python code/cross_sections/estimate_cross_sections.py [--jobs N] [--rho R] [--rh
 # stage 2 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
 python code/cross_sections/extrapolate_params.py
 
-python code/cross_sections/cross_section_visualization.py [age] [cohort] [sex]  # raw histogram + fitted density; defaults to age 40, cohort 1950, women (year = cohort + age)
-python code/cross_sections/plot_uncapped_mean_vs_ass.py                         # unconstrained vs constrained implied uncapped mean, both against ASS
-python code/cross_sections/agg_tax_total_visualization.py                       # end-to-end: capped and uncapped aggregates vs ASS + Trustees Report
+python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]  # raw histogram + fitted density; defaults to age 40, cohort 1950, women (year = cohort + age)
+python code/cross_sections/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
+python code/cross_sections/plot_agg_tax_total.py                       # end-to-end: capped and uncapped aggregates vs ASS + Trustees Report
 ```
 
 **Stage 1** (`estimate_cross_sections.py`) fits ~6.4k `(year, sex, age)` cells (single-year ages
