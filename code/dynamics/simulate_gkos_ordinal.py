@@ -208,6 +208,32 @@ def main():
         fig.savefig(f"{OUT}/gkos_ordinal_transform_moments.{ext}", dpi=200)
     print(f"wrote {OUT}/gkos_ordinal_transform_moments.pdf/.png")
 
+    # Slide cut: the mean panel and the lifetime-growth panel only. The point needs one
+    # moment the shift moves (the mean) and one it does not own (lifetime growth by
+    # lifetime-earnings percentile): raw panels differ across g(t), transformed overlap
+    # exactly. Slide type sizes; series colors from the validated palette.
+    slide_rc = {"font.size": 14, "axes.titlesize": 16, "axes.labelsize": 14,
+                "xtick.labelsize": 13, "ytick.labelsize": 13, "legend.fontsize": 11}
+    sstyle = {"raw bench":    dict(color="0.55", ls="-",  lw=2.0),
+              "raw flat":     dict(color="0.55", ls="--", lw=1.6),
+              "transf bench": dict(color="#2a78d6", ls="-", lw=2.8),
+              "transf flat":  dict(color="#eb6834", ls=(0, (2, 3)), lw=2.2)}
+    with plt.rc_context(slide_rc):
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.6, 3.1))
+        for name, m in mom.items():
+            ax1.plot(AGES, m["logmean"], label=name, **sstyle[name])
+            v = m["ltg"]
+            ax2.plot(np.linspace(0, 100, v.size), v, label=name, **sstyle[name])
+        ax1.set_title("Mean log earnings")
+        ax1.set_xlabel("age")
+        ax2.set_title("Lifetime growth")
+        ax2.set_xlabel("lifetime-earnings percentile")
+        ax2.legend(frameon=False, loc="lower right")
+        fig.tight_layout()
+    for ext in ("pdf", "png"):
+        fig.savefig(f"{OUT}/gkos_ordinal_slide.{ext}", dpi=200)
+    print(f"wrote {OUT}/gkos_ordinal_slide.pdf/.png")
+
 
 if __name__ == "__main__":
     main()

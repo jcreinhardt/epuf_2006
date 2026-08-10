@@ -47,45 +47,22 @@
 % ======================================================================
 
 % ======================================================================
-% Slide 1 --- What changed and why
+% Slide 1 --- Old vs. new
 % ======================================================================
-\begin{frame}{We replaced the cross-sectional earnings estimation procedure}
-  \begin{itemize}
-    \item The previous pipeline stitched together \textbf{many data sources with very
-          different underlying samples}.
-    \item Reconciling those samples introduced more error than it removed: the seams
-          between sources dominated the results.
-    \item \textbf{New approach:} use \alert{SSA microdata only}, fit the covered years
-          directly, and \textbf{extrapolate parameters} to the non-covered years.
-    \item Cleaner inputs, one consistent sample, and demonstrably better fits.
-  \end{itemize}
-  \vfill
-  \begin{columns}[c]
-    \begin{column}{0.48\textwidth}\centering
-      \includegraphics[width=0.78\linewidth]{cross_sections/men_dpln_2000.pdf}
+\begin{frame}{Old vs.\ new cross-sectional estimation}
+  \textbf{Old:} \textbf{GMM} on moments collected from \textbf{several different sources}.
+  Each source has its own sample, so the moments being matched do not come from one population.
 
-      {\footnotesize Example cell fit: men 2000, dPlN}
-    \end{column}
-    \begin{column}{0.48\textwidth}\centering
-      \includegraphics[width=0.78\linewidth]{cross_sections/women_mixture_2000.pdf}
-
-      {\footnotesize Example cell fit: women 2000, lognormal mixture}
-    \end{column}
-  \end{columns}
-\end{frame}
-
-% ======================================================================
-% Slide 2 --- Broad idea
-% ======================================================================
-\begin{frame}{Broad idea}
+  \medskip
+  \textbf{New:} \textbf{MLE} on the \textbf{SSA microdata alone} --- the sample that actually
+  pays into Social Security:
   \begin{enumerate}
-    \item Fit \textbf{parametric distributions} to earnings cross sections from the
-          \textbf{1951--2006 SSA public-use file}.
+    \item Fit \textbf{parametric distributions} per $(\text{year},\text{sex},\text{age})$ cell
+          on the \textbf{1951--2006 SSA public-use file} (EPUF).
     \item \textbf{Extrapolate} the parameter surfaces to the non-covered years:
           backward to \textbf{1937--1950}, forward to \textbf{2006--2100}.
-    \item Later, combine with the \textbf{Guvenen / CMS process} for earnings
-          \textbf{dynamics}, linking cross sections to the panel process through an
-          \textbf{ordinal (rank-preserving) transform}.
+    \item Matches the \textbf{ASS aggregate totals} and the \textbf{distribution of earnings}
+          better than the GMM fit.
   \end{enumerate}
   \vfill
   \begin{center}
@@ -106,108 +83,91 @@
 % ======================================================================
 % Slide 3 --- Step 1, the estimator
 % ======================================================================
-\begin{frame}{Step 1 --- one joint smoothed-constrained MLE}
-  Fit a \textbf{dPLN} (men) / \textbf{lognormal mixture} (women) per
-  $(\text{year},\text{sex},\text{age})$ \textbf{cell} $c$ with the \textbf{doubly Type-I
-  censored} likelihood: top-coded at $\HIGHC=\text{taxmax}-\$1000$, bottom at $\LOWC=\$200$.
-  \begin{itemize}
-    \item[(a)] \emph{Regime switching:} the likelihood is nearly flat in level across two very
-          different parameter values (dPLN tail index, the mixture's component swaps)
-          $\Rightarrow$ \alert{borrow strength across neighbouring ages}.
-    \item[(b)] \emph{Heavy early censoring:} $\sim$40--45\% top-coded parks the fit on an
-          $\alpha\!\le\!1$ (\emph{infinite}-mean) tail $\Rightarrow$ \alert{pin the year's
-          uncapped mean} to the published ASS benchmark.
-  \end{itemize}
-  \vfill
-  Both are solved \textbf{together}, in \textbf{one} problem per \textbf{year} $k$ over
-  \textbf{both sexes'} cells:
-  {\small
-  \[
-    \min_{\{\theta_c\}}\ \sum_{c\in k}\negll_c(\theta_c)
-      \ +\ \rho\sum_{s}\sum_{a}\sum_{j} h_\kappa\!\Bigl(\sqrt{\Omega_j}\,
-        \bigl[\Delta^2 g(\theta_{s,a})\bigr]_j\Bigr)
-    \quad\text{s.t.}\quad
-    \sum_{c\in k} w_c\,\mathbb{E}_{\theta_c}[X]\ =\ m_k
-  \]}%
-
-  \vspace{-2pt}
-  {\footnotesize Sequential passes fail both ways --- smooth-then-constrain breaks the
-  constraint (measured: $\sim$7\%), constrain-then-smooth breaks it too. $w_c$ = cell share of
-  the year's workers (ages 15--77); $m_k$ = ASS \texttt{aggearn\_tot/num\_wrk}.\par}
-\end{frame}
-
-% ======================================================================
-% Slide 4 --- the two design choices
-% ======================================================================
-\begin{frame}{Step 1 --- the two choices that make it work}
-  \textbf{1. Penalize \alert{functionals} $g(\theta)$, not raw parameters.} Raw parameters flip
-  meaning across the mixture's component swaps and the dPLN's body/tail trades, so a penalty on
-  $\theta$ is silent about exactly the regime flips it is meant to fix. Six \textbf{regime-invariant}
-  slots, one layout for both sexes:
-  {\small
-  \[
-    g(\theta)=\bigl[\ \mathbb{E}\log Y,\ \ \mathrm{sd}\log Y,\ \ \mathrm{skew}\log Y,\ \
-      \operatorname{logit}S(\text{cap}),\ \ \log\beta,\ \ \log\alpha\ \bigr]
-  \]}%
-  \vspace{-6pt}
-
-  All six are \textbf{closed form}, so $g$ is cheap enough to evaluate inside \emph{every}
-  objective call. Skew is not optional: it separates ``dispersed body, thin tail'' from ``tight
-  body, fat tail'' --- the competing basins.
-
-  \medskip
-  \textbf{2. A \alert{robust (Huber)} second difference along age.} $\Delta^2$ leaves a
-  \emph{linear} age profile unpenalized; the Huber knee lets a genuine \textbf{isolated} regime
-  jump (retirement, young-age entry) through at $\sim$linear cost instead of smearing it, and is
-  \textbf{location-free} --- so the year-varying retirement age needs \textbf{no cutoff}.
+\begin{frame}{Step 1 --- the estimator}
+  \small
+  {\footnotesize Cell $c=(\text{year }k,\text{ sex }s,\text{ age }a)$, $y_i=\log x_i$, censoring
+  at $\LOWC=\$200$, $\HIGHC=\text{taxmax}_k-\$1000$. $f_\theta$: dPLN (men,
+  $\theta=(\alpha,\beta,\nu,\tau)$), log-normal mixture (women,
+  $\theta=(\mu_1,\mu_2,\sigma_1,\sigma_2,w)$).\par}
 
   \smallskip
-  {\footnotesize $\Omega_j = 1/\operatorname{MAD}_a[(\Delta^2 g)_j]^2$ and $\rho$ are frozen
-  \emph{once, globally} from the unsmoothed fits.\par}
+  \textbf{1. Doubly censored log-likelihood} --- outside $[\LOWC,\HIGHC]$ only the counts
+  $n^{\text{lo}}_c,n^{\text{hi}}_c$ are observed:
+  \vspace{-5pt}
+  \[
+    \ell_c(\theta)=\!\!\sum_{i:\,\LOWC<x_i<\HIGHC}\!\!\log f_\theta(y_i)
+      \ +\ n^{\text{lo}}_c\log F_\theta(\log\LOWC)
+      \ +\ n^{\text{hi}}_c\log\bigl[1-F_\theta(\log\HIGHC)\bigr]
+  \]
+  \vspace{-13pt}
+
+  \textbf{2. $\alpha$ not identified off the interior} --- up to \textbf{80\%} of a cell's
+  observations are censored:
+  \vspace{-5pt}
+  \[
+    \max_{\{\theta_c\}}\sum_{c\in k}\ell_c(\theta_c)
+    \ \ \text{s.t.}\ \ \sum_{c\in k}w_c\,\mathbb{E}_{\theta_c}[X]=m_k
+    \qquad\Longleftrightarrow\qquad
+    \min_{\theta_c}\ -\ell_c(\theta_c)+\eta_k\,w_c\,\mathbb{E}_{\theta_c}[X]
+  \]
+  \vspace{-13pt}
+
+  \textbf{3. Regime switching} --- some ages have \textbf{two minima far apart in $\theta$ with
+  very similar likelihoods}; force consistency across age.
+  \begin{itemize}\itemsep0pt
+    \item Penalizing \textbf{functionals of the distribution} works better than raw parameters.
+  \end{itemize}
+  \vspace{-4pt}
+  \[
+    \min_{\{\theta_c\}}\ \sum_{c\in k}\Bigl[-\ell_c(\theta_c)+\eta_k w_c\,\mathbb{E}_{\theta_c}[X]\Bigr]
+      \ +\ \rho\sum_{s,a}\sum_{j=1}^{6} h_\kappa\!\Bigl(\sqrt{\Omega_j}\,
+        \bigl[\Delta^2 g(\theta_{s,a})\bigr]_j\Bigr)
+  \]
+  \vspace{-11pt}
+
+  {\footnotesize $w_c=n_c/n_k$ (ages 15--77), $m_k=$ ASS \texttt{aggearn\_tot/num\_wrk};
+  $\Delta^2 g_{s,a}=g_{s,a+1}-2g_{s,a}+g_{s,a-1}$; $h_\kappa$ Huber, $\kappa=1.5$.\par}
 \end{frame}
 
 % ======================================================================
-% Slide 5 --- how it is solved
+% Slide 4 --- how it is solved
 % ======================================================================
 \begin{frame}{Step 1 --- how it is solved}
-  Per year (years are independent $\Rightarrow$ run in parallel):
-  \begin{enumerate}
-    \item[\textbf{0.}] \textbf{Multi-start} MLE per cell; keep top-$K$ optima, deduped
-      \textbf{in $g$-space}.
-    \item[\textbf{1.}] \textbf{Viterbi} basin selection along age --- pick the \emph{combination}
-      maximizing fit minus roughness, not the cell-by-cell argmax.
-    \item[\textbf{2.}] \textbf{$\rho$-continuation} (graduated non-convexity): start smooth, step
-      down, warm-started Gauss--Seidel sweeps.
-    \item[\textbf{3.}] \textbf{$\eta$ search} --- with the smoothing \alert{inside} the loop.
-    \item[\textbf{4.}] \textbf{Re-check basins} at the converged $\eta$; re-seed only if a cell moved.
-  \end{enumerate}
+  Fix $\rho$. Per year:
+  \begin{itemize}
+    \item[\textbf{0.}] Unconstrained MLE per cell $\Rightarrow$ starting values and the weight
+      matrix $\Omega_j=1/\operatorname{MAD}_a[(\Delta^2 g)_j]^2$.
+    \item[\textbf{1.}] Find $\eta_k$ such that the constraint holds.
+  \end{itemize}
   \vfill
-  \textbf{Why $\eta\ge 0$ is a theorem, not a preference.} The term is $+\eta\,w\,\mathbb{E}[X]$:
-  for $\eta>0$ it is bounded below, so thinning has an interior optimum. For $\eta<0$ it rewards
-  larger $\mathbb{E}[X]$ \emph{linearly} while $\mathbb{E}[X]\sim(\alpha-1)^{-1}$ explodes --- no
-  interior optimum, and every cell hits the $\alpha$ floor at once. So a year sitting \emph{below}
-  the benchmark is left alone; the fix is \textbf{less smoothing}, not a negative multiplier.
+  Then compare across $\rho$ and pick the one where model and ASS totals overlap best.
 \end{frame}
 
 % ======================================================================
 % Slide 5 --- Steps 2 and 3
 % ======================================================================
 \begin{frame}{Steps 2 \& 3 --- extrapolate, then aggregate}
-  \textbf{Step 2 --- extrapolate off the data edges} (anchor + wage index):
-  \begin{itemize}
-    \item \textbf{Freeze the shape parameters} at the \textbf{nearest} data edge --- the
-      2000--04 average going forward, the \textbf{1951--55} average going back. They carry no
-      secular trend, so holding them fixed is the honest prior.
-    \item Drive the \textbf{location} parameters with an external \textbf{nominal wage-growth}
-      series (observed, then projected) rather than a free linear-in-year slope.
-    \item \emph{Exception:} men's pre-1951 $\alpha$ is itself a censoring artifact, so it is
-      \textbf{calibrated} --- a 2-parameter linear-in-year trend fit to the ASS uncapped mean
-      over 1937--1950, since $\alpha$ is unidentified above the cap.
+  \small
+  \textbf{Step 2 --- extrapolate to 1937--1950 and 2005--2100.} Per $(\text{sex},\text{age})$:
+  \begin{itemize}\itemsep1pt
+    \item Shapes --- $(\alpha,\beta,\tau)$ men, $(\sigma_1,\sigma_2,w)$ women --- held fixed at
+      the \textbf{2000--04 average} forward, the \textbf{1951--55 average} backward.
+    \item Locations --- $\nu$ men, $(\mu_1,\mu_2)$ women --- shifted by published earnings growth:
+      \vspace{-3pt}
+      \[
+        m_{s,a}(y)=m_{s,a}^{0}+\bigl[G(y)-\bar G\bigr]
+      \]
+      \vspace{-13pt}
+
+      {\footnotesize $G$ = log average covered earnings: ASS realized through 2004, Trustees
+      Report projected growth after.\par}
+    \item 1937--1950 only: men's $\alpha$ additionally scaled by $k_y$, solved per year so the
+      uncapped mean matches ASS exactly ($k_y\alpha>1$ imposed).
   \end{itemize}
-  \vfill
-  \textbf{Step 3 --- aggregate:} combine the parameter surfaces with \textbf{gender shares} and
-  \textbf{total population (projections)} to compute \textbf{aggregate taxable-income totals},
-  validated against ASS + Trustees Report, capped \emph{and} uncapped.
+
+  \smallskip
+  \textbf{Step 3 --- aggregate} to yearly taxable-earnings totals, using employment shares and
+  labor-force totals from ASS / TR. Validated against ASS + TR, capped and uncapped.
 \end{frame}
 
 % ======================================================================
@@ -215,12 +175,12 @@
 % ======================================================================
 \begin{frame}{Raw parameter estimates}
   \begin{center}
-    \includegraphics[height=0.68\textheight]{cross_sections/param_heatmaps_men.pdf}
+    \makebox[\linewidth][c]{%
+      \includegraphics[width=1.12\linewidth]{cross_sections/nu_tau_men.pdf}}
   \end{center}
-  \vspace{-4pt}
+  \vspace{-2pt}
   \begin{center}\footnotesize
-    Stage-0 per-cell MLE, men --- note the regime-switching speckle across adjacent cells
-    (women's mixture surfaces analogous).
+    Men. Color limits shared with the next slide.
   \end{center}
 \end{frame}
 
@@ -229,12 +189,12 @@
 % ======================================================================
 \begin{frame}{Smoothed parameter estimates}
   \begin{center}
-    \includegraphics[height=0.68\textheight]{cross_sections/param_heatmaps_men_smoothed.pdf}
+    \makebox[\linewidth][c]{%
+      \includegraphics[width=1.12\linewidth]{cross_sections/nu_tau_men_smoothed.pdf}}
   \end{center}
-  \vspace{-4pt}
+  \vspace{-2pt}
   \begin{center}\footnotesize
-    After the joint solve --- roughness penalty and mean constraint applied \emph{together};
-    coherent surfaces, realistic tails.
+    Men, after the joint solve.
   \end{center}
 \end{frame}
 
@@ -243,11 +203,12 @@
 % ======================================================================
 \begin{frame}{Implied aggregate totals vs.\ ASS / TR}
   \begin{center}
-    \includegraphics[height=0.72\textheight]{cross_sections/aggregate_taxable_extrapolated.pdf}
+    \makebox[\linewidth][c]{%
+      \includegraphics[width=1.12\linewidth]{cross_sections/aggregate_taxable_capped.pdf}}
   \end{center}
-  \vspace{-4pt}
+  \vspace{-2pt}
   \begin{center}\footnotesize
-    End-to-end validation: extrapolated model vs.\ published totals, capped and uncapped.
+    Shaded = observed composition (1951--2004); dashed = ASS/TR splice.
   \end{center}
 \end{frame}
 
@@ -258,103 +219,123 @@
 % ======================================================================
 % Slide 9 --- CMS overview
 % ======================================================================
-\begin{frame}{CMS (JF 2025): the earnings process in four steps}
+\begin{frame}{Log-normal correction}
   \small
-  \begin{enumerate}
-    \item \textbf{Keep every GKOS (2021) stochastic component} --- mixture AR(1) $z$, mixture
-      transitory $\varepsilon$, HIP $(\alpha_i,\beta_i)$, state-dependent nonemployment $\nu$ ---
-      estimated on \emph{male} SSA data, \emph{jointly with a latent} $g(t)$, behind
-      sample-selection filters.
-    \item \textbf{Swap out $g(t)$}: cubic in age fit to GKSW (2017) \textbf{cohort $\times$
-      gender} profiles of mean log earnings, normalized by average economy-wide earnings.
-    \item \textbf{Simulate}, relative to the SSA wage index:
-      {\small
-      \begin{align*}
-        y_{it} &= \tilde g_{c,s}(t) + \alpha_i + \beta_i t + z_{it} + \varepsilon_{it}
-          \ \alert{-\ \tfrac12\bigl[\Var(z_t)+\Var(\alpha+\beta t)+\Var(\varepsilon)\bigr]}\\
-        Y_{it} &= W_i\,(1-\nu_{it})\,e^{y_{it}}\,\big/\,\alert{(1-\bar\nu_t)},
-          \qquad W_i = 0 \text{ for 10\% of men, 20\% of women}
-      \end{align*}}%
-    \item \textbf{Assign}: match paths to SCF workers by (year, age, gender, income bin);
-      apply SSA tax + benefit formulas $\Rightarrow$ Social Security wealth.
+  \begin{enumerate}\itemsep2pt
+    \item Keep the \textbf{GKOS (2021)} process --- mixture AR(1) $z$, mixture transitory
+      $\varepsilon$, HIP $(\alpha_i,\beta_i)$, nonemployment --- estimated on \emph{male} SSA
+      data \textbf{jointly with a latent} $g(t)$.
+    \item Replace $g(t)$ by $\tilde g_{c,s}(t)$: a cubic in age fit to \textbf{GKSW (2017)
+      cohort $\times$ gender profiles of \emph{mean log} earnings}.
+    \item Pick $\tilde g$ so that means line up:
+      \vspace{-2pt}
+      \[
+        \mathbb{E}[\tilde Y\mid t,c,s]
+          =\exp\bigl(\underbrace{\mathbb{E}[\log Y\mid t,c,s]}_{\text{observed}}\bigr)
+      \]
+      \vspace{-4pt}
+      \[
+        \tilde Y_{it}=\exp\bigl(\underbrace{\tilde g_{c,s}(t)}_{\text{deterministic}}
+          +\underbrace{\alpha_i+\beta_i t+z_{it}+\varepsilon_{it}}_{x_{it}\ \approx\ N(0,V)}\bigr),
+        \qquad
+        \mathbb{E}[\tilde Y]=e^{\tilde g}\,\mathbb{E}[e^{x}]=e^{\tilde g+V/2}
+      \]
+      \vspace{-2pt}
+      \[
+        \Longrightarrow\quad
+        \tilde g_{c,s}(t)=\mathbb{E}[\log Y\mid t,c,s]-\tfrac12 V
+      \]
   \end{enumerate}
-  \smallskip
-  {\footnotesize The \alert{red} terms are the two corrections; $W_i$ targets the SCF share of
-  retirees who never receive benefits (Deaton--Paxson).\par}
 \end{frame}
 
 % ======================================================================
-% Slide 10 --- why the corrections
+% Slide 10 --- the nonemployment fix
 % ======================================================================
-\begin{frame}{Why the two corrections --- and why GKOS never needed them}
+\begin{frame}{CMS: the nonemployment fix}
   \small
-  Goal: match the \textbf{exponentiated data moment in levels},
-  $\ \mathbb{E}[Y_{it}\mid a,s,c] = e^{\tilde g(a)}$.
-  \begin{itemize}
-    \item[\textbf{1.}] \textbf{Jensen.} The shocks are zero-mean \emph{in logs}, not in levels:
-      $\ \mathbb{E}\,e^{\tilde g + x} = e^{\tilde g}\,\mathbb{E}\,e^{x}
-        \approx e^{\tilde g + \Var(x)/2}$,
-      a 40--90\% overshoot at GKOS variances. Subtracting $\Var(x)/2$ restores
-      $\mathbb{E}\,e^{y}=e^{\tilde g}$ (exact for Gaussians; mixtures $\Rightarrow$ approximation).
-    \item[\textbf{2.}] \textbf{Nonemployment.} $\tilde g$ is measured \emph{on workers}, so
-      unemployment's drag on the mean is already inside it. Applying $(1-\nu)$ again would
-      double-count: $\ \mathbb{E}[(1-\nu)e^{y}] \approx (1-\bar\nu)\,e^{\tilde g}$
-      $\Rightarrow$ divide by $(1-\bar\nu)$
-      (exact up to $\operatorname{cov}(\nu,e^{x})$ --- $\nu$ hits low-$z$ workers).
-  \end{itemize}
-  \smallskip
-  \textbf{Is this because the other parameters were calibrated in levels? Exactly.}
-  GKOS estimate $g(t)$ \emph{jointly} with the shocks, matching moments of simulated
-  \textbf{levels}, so $\mathbb{E}\,e^{x}$ and the nonemployment drag are
-  \alert{absorbed into the fitted $g(t)$}. Pin $\tilde g$ externally and reuse the shocks, and
-  nothing absorbs them --- the corrections re-impose \emph{by hand} what joint estimation did
-  automatically.
-  \smallskip
+  \textbf{Problem:} non-claiming rates in the SCF are far higher than the process implies.
 
-  {\footnotesize Caveat: CMS's anchor is $\exp(\text{mean log})$ --- a \emph{geometric} mean ---
-  so corrected levels still sit $\approx e^{-\Var(x)/2}$ below the arithmetic-mean profile.\par}
+  \medskip
+  \textbf{Fix:} multiply earnings by a nonemployment dummy $u_{i}\in\{0,1\}$, fixed at
+  \textbf{10\%} (men) / \textbf{20\%} (women). That moves the mean:
+  \vspace{-2pt}
+  \[
+    \mathbb{E}\bigl[(1-u)\tilde Y\bigr]
+      =\mathbb{E}[\tilde Y]\,\mathbb{E}[1-u]+\operatorname{Cov}(\tilde Y,1-u)
+  \]
+  \vspace{-15pt}
+
+  \medskip
+  $u$ is drawn \textbf{independently} of $\tilde Y$, so $\operatorname{Cov}(\tilde Y,1-u)=0$ and
+  dividing by $\mathbb{E}[1-u]$ restores the mean \textbf{exactly}:
+  \vspace{-2pt}
+  \[
+    \tilde Y_{it}=\frac{(1-u_{i})\,e^{\tilde g_{c,s}(t)+x_{it}}}{\mathbb{E}[1-u]}
+    \qquad\Longrightarrow\qquad
+    \mathbb{E}[\tilde Y_{it}]=e^{\tilde g_{c,s}(t)+V/2}
+  \]
 \end{frame}
 
 % ======================================================================
-\section{What should we do?}
+% Slide 11 --- problems 2 and 3
 % ======================================================================
-
-% ======================================================================
-% Slide 11 --- ordinal transform makes the CMS layer inert
-% ======================================================================
-\begin{frame}{Under an ordinal transform, the whole CMS layer is inert}
-  Within a (year, sex, age) cell, $\tilde g(t)$, the Jensen term, and $(1-\bar\nu)^{-1}$ are
-  \textbf{common location/scale shifts}: within-cell \textbf{ranks never see them}, and
-  rank-mapping onto target marginals cancels them \emph{exactly}.
+\begin{frame}{Problem --- selection bias}
+  \small
+  The realized process is $(1-\nu_{it})\exp(\tilde g_{c,s}(t)+x_{it})$, and nonemployment
+  depends on the persistent component:
+  $\ \Pr(\nu_{it}>0)=\Lambda(a+b\,t+\alert{c\,z_{it}}+d\,z_{it}t)$, $c=-5.03$. It hits
+  \textbf{low-$z$} workers, so $\mathbb{E}[\log Y\mid\text{observed}]\neq\tilde g_{c,s}(t)$.
+  \vspace{-2pt}
   \begin{center}
-    \includegraphics[height=0.52\textheight]{dynamics/gkos_ordinal_transform_moments.pdf}
+    \includegraphics[width=0.82\linewidth]{dynamics/cms_selection_bias.pdf}
   \end{center}
-  \vspace{-8pt}
-  {\footnotesize GKOS benchmark, estimated vs.\ flat $g(t)$, shared draws: raw moments differ
-  (gray), transformed panels \textbf{bit-identical} (orange on blue). Post-transform, dynamics
-  $=f(\text{copula},\text{marginals})$. \hfill \texttt{code/dynamics/simulate\_gkos\_ordinal.py}\par}
 \end{frame}
 
 % ======================================================================
-% Slide 12 --- three options
+\section{CMS vs.\ ordinal transform}
 % ======================================================================
-\begin{frame}{Three ways forward}
-  \begin{itemize}
-    \item[\textbf{(a)}] \textbf{GKOS dynamics $\times$ our fitted cross-sections, ordinal
-      transform.} Marginals exact by construction --- gender, cohort, censoring-aware, pinned to
-      ASS. Nothing from CMS to replicate: it is all inert under the transform. \emph{Cost:}
-      growth/IRF moments become emergent (re-check post-transform); male copula for women.
-    \item[\textbf{(b)}] \textbf{Implement CMS correctly, no transform.} Self-contained process,
-      keeps GKOS's dynamic fit. \emph{Cost:} cross-sections mean-pinned at best --- shapes inherit
-      the latent-vs-selected mismatch; still male dynamics for women; duplicates what Part 1
-      already does better.
-    \item[\textbf{(c)}] \textbf{Estimate our own dynamics on the EPUF panel}, combine with the
-      fitted cross-sections. EPUF \emph{is} a panel: copula and marginals from the same sample,
-      gender-specific dynamics. \emph{Cost:} top-coding + rounding limit what is estimable;
-      the most work.
+
+% ======================================================================
+% Slide --- the mean does not matter under an ordinal transform
+% ======================================================================
+\begin{frame}{After an ordinal transform, the mean does not matter}
+  \small
+  $(X,Y)$ with marginals $F_X,F_Y$ and copula $C$; target marginals $\tilde F_X,\tilde F_Y$:
+  \vspace{-3pt}
+  \[
+    (\tilde X,\tilde Y)=\bigl(\tilde F_X^{-1}(F_X(X)),\ \tilde F_Y^{-1}(F_Y(Y))\bigr)
+    \qquad\Longrightarrow\qquad
+    \Pr(\tilde X\le x,\ \tilde Y\le y)=C\bigl(\tilde F_X(x),\tilde F_Y(y)\bigr)
+  \]
+  \vspace{-12pt}
+
+  Shift the inputs --- by Sklar's theorem,
+  \vspace{-3pt}
+  \[
+    \Pr(X+a\le x,\ Y+b\le y)=C\bigl(F_X(x-a),\ F_Y(y-b)\bigr)
+  \]
+  \vspace{-12pt}
+  \begin{itemize}\itemsep2pt
+    \item Shifts enter the \textbf{marginals only}; $C$ is invariant under increasing maps.
+    \item The transform replaces exactly those marginals with $\tilde F_X,\tilde F_Y$
+      $\Rightarrow$ same $C\bigl(\tilde F_X(x),\tilde F_Y(y)\bigr)$ with or without the shift.
+    \item $\tilde g_{c,s}(t)$, $-\tfrac12V$, $1/\mathbb{E}[1-u]$ are within-cell shifts in logs
+      $\Rightarrow$ \textbf{CMS and GKOS give the exact same transformed process}.
   \end{itemize}
-  \textbf{Recommendation:} \alert{(a) now}, validating dynamic moments after the transform;
-  \textbf{(c) as the upgrade}; (b) is dominated.
 \end{frame}
+
+% ======================================================================
+% Slide --- example: GKOS with two g(t) profiles
+% ======================================================================
+\begin{frame}{Example --- GKOS process, estimated vs.\ flat $g(t)$, shared draws}
+  \begin{center}
+    \makebox[\linewidth][c]{%
+      \includegraphics[width=1.05\linewidth]{dynamics/gkos_ordinal_slide.pdf}}
+  \end{center}
+  \vspace{-4pt}
+  {\footnotesize Raw moments differ across the two $g(t)$ (gray); the transformed panels are
+  \textbf{bit-identical} (orange on blue).\par}
+\end{frame}
+
 
 \end{document}

@@ -61,7 +61,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 import crosssec_fit as cf
 
@@ -318,6 +318,60 @@ def agg_uncapped(unc, comp_by_year, cov):
     return fin, inf_share
 
 
+# Series colors. Categorical slots 1 and 2 of the reference palette plus a near-black for
+# the benchmark, which is a reference line rather than a category. Validated as a set on a
+# light surface: worst normal-vision dE 33.6 (floor 15), worst CVD dE 24.7 (target >=8),
+# every contrast >= 3:1 -- so the three stay separable in print and under color blindness,
+# which matplotlib's default C0/C3 pairing does not guarantee.
+C_BENCH, C_EPUF, C_MODEL = "#1a1a19", "#2a78d6", "#eb6834"
+# Slide cut: fewer words and bigger type. The 2x2 diagnostic keeps the long, self-describing
+# labels (it is read on its own, off-slide); the slide version is read from across a room.
+SLIDE_RC = {"font.size": 14, "axes.titlesize": 17, "axes.labelsize": 14,
+            "xtick.labelsize": 13, "ytick.labelsize": 13, "legend.fontsize": 12}
+
+
+def panel_levels(ax, bench, epuf, yr, m, y_lo, y_hi, ass_last, slide=False):
+    """Taxable (capped) aggregate levels, log y, $ trillions."""
+    by, ey = sorted(bench), sorted(epuf)
+    lab = (["ASS + TR benchmark", "EPUF $\\times$100", "model"] if slide else
+           ["benchmark: ASS taxable (1937–2022) + TR 2023 (after)",
+            "EPUF (raw 1% microdata ×100)", "extrapolated model"])
+    ax.plot(by, [bench[y] / 1e6 for y in by], color=C_BENCH, lw=3.0 if slide else 2.2,
+            label=lab[0])
+    ax.plot(ey, [epuf[y] / 1e6 for y in ey], color=C_EPUF, lw=2.4 if slide else 1.4,
+            marker="o", ms=3.5 if slide else 2.5, label=lab[1])
+    ax.plot(yr, m / 1e6, color=C_MODEL, lw=2.8 if slide else 1.9, ls=":", label=lab[2])
+    ax.axvspan(y_lo, y_hi, color="grey", alpha=0.08)
+    ax.axvline(ass_last, color="grey", lw=0.8, ls="--")
+    ax.set_yscale("log")
+    ax.set_ylabel("$ trillions" if slide else "aggregate taxable earnings ($ trillions)")
+    ax.set_xlabel("year")
+    ax.set_title("Taxable earnings (log scale)" if slide else "Taxable (capped): levels — log scale")
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.legend(frameon=False, loc="upper left", fontsize=None if slide else 8.5)
+
+
+def panel_ratio(ax, bench, epuf, years, model, y_lo, y_hi, ass_last, slide=False):
+    """Taxable (capped) series divided by the combined ASS+TR benchmark."""
+    ax.axhline(1.0, color=C_BENCH, lw=1.2)
+    xe = [y for y in sorted(epuf) if y in bench]
+    xm = [y for y in years if y in bench]
+    ax.plot(xe, [epuf[y] / bench[y] for y in xe], color=C_EPUF, lw=2.4 if slide else 1.6,
+            marker="o", ms=3.5 if slide else 2.5, label="EPUF" if slide else "EPUF / benchmark")
+    ax.plot(xm, [model[y] / bench[y] for y in xm], color=C_MODEL, lw=2.8 if slide else 1.8,
+            ls=":", label="model" if slide else "model / benchmark")
+    ax.axvspan(y_lo, y_hi, color="grey", alpha=0.08,
+               label=None if slide else "observed-composition years")
+    ax.axvline(ass_last, color="grey", lw=0.8, ls="--")
+    ax.set_ylabel("ratio to benchmark" if slide else "series / combined benchmark")
+    ax.set_xlabel("year")
+    ax.set_title("Relative to benchmark" if slide
+                 else "Taxable (capped): relative to benchmark (1.0 = exact)")
+    if slide:                      # the default 0.02 steps crowd the axis at slide type
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 5, 10]))
+    ax.legend(frameon=False, loc="best", fontsize=None if slide else 8.5)
+
+
 def main():
     cov, awi, trpay = trustees()
     cov.update(ass_workers())                           # ASS num_wrk over 1937-2022; TR keeps 2023+
@@ -346,31 +400,9 @@ def main():
     m = np.array([model[y] for y in years])
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(13.5, 10))
 
-    # ---- (top-left) taxable levels (log y, trillions) ----
-    by = sorted(bench); ey = sorted(epuf)
-    ax1.plot(by, [bench[y] / 1e6 for y in by], color="k", lw=2.2,
-             label="benchmark: ASS taxable (1937–2022) + TR 2023 (after)")
-    ax1.plot(ey, [epuf[y] / 1e6 for y in ey], color="C0", lw=1.4, marker="o", ms=2.5,
-             label="EPUF (raw 1% microdata ×100)")
-    ax1.plot(yr, m / 1e6, color="C3", lw=1.9, ls=":", label="extrapolated model")
-    ax1.axvspan(y_lo, y_hi, color="grey", alpha=0.08)
-    ax1.axvline(ass_last, color="grey", lw=0.8, ls="--")
-    ax1.set_yscale("log"); ax1.set_ylabel("aggregate taxable earnings ($ trillions)")
-    ax1.set_xlabel("year"); ax1.set_title("Taxable (capped): levels — log scale")
-    ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
-    ax1.legend(frameon=False, fontsize=8.5, loc="upper left")
-
-    # ---- (top-right) taxable ratio to the combined benchmark ----
-    ax2.axhline(1.0, color="k", lw=1.0)
-    xe = [y for y in ey if y in bench]; re = [epuf[y] / bench[y] for y in xe]
-    xm = [y for y in years if y in bench]; rm = [model[y] / bench[y] for y in xm]
-    ax2.plot(xe, re, color="C0", lw=1.6, marker="o", ms=2.5, label="EPUF / benchmark")
-    ax2.plot(xm, rm, color="C3", lw=1.8, ls=":", label="model / benchmark")
-    ax2.axvspan(y_lo, y_hi, color="grey", alpha=0.08, label="observed-composition years")
-    ax2.axvline(ass_last, color="grey", lw=0.8, ls="--")
-    ax2.set_ylabel("series / combined benchmark"); ax2.set_xlabel("year")
-    ax2.set_title("Taxable (capped): relative to benchmark (1.0 = exact)")
-    ax2.legend(frameon=False, fontsize=8.5, loc="best")
+    # ---- (top row) the capped comparison: levels, then ratio to the benchmark ----
+    panel_levels(ax1, bench, epuf, yr, m, y_lo, y_hi, ass_last)
+    panel_ratio(ax2, bench, epuf, years, model, y_lo, y_hi, ass_last)
 
     # ---- (bottom-left) uncapped mean earnings per worker (log y, $) ----
     ux = sorted(mu_fin); ax = sorted(ass_unc)
@@ -405,6 +437,17 @@ def main():
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     outp = "output/cross_sections/aggregate_taxable_extrapolated"
     fig.savefig(outp + ".pdf"); fig.savefig(outp + ".png", dpi=150); plt.close(fig)
+
+    # Slide cut: the capped comparison only (levels + ratio). The uncapped row is the
+    # diagnostic that tail error is hiding under the cap -- it belongs in the 2x2 above,
+    # not on a slide whose claim is about taxable totals.
+    with plt.rc_context(SLIDE_RC):
+        figs, (bx1, bx2) = plt.subplots(1, 2, figsize=(8.6, 3.18))
+        panel_levels(bx1, bench, epuf, yr, m, y_lo, y_hi, ass_last, slide=True)
+        panel_ratio(bx2, bench, epuf, years, model, y_lo, y_hi, ass_last, slide=True)
+        figs.tight_layout()
+    outs = "output/cross_sections/aggregate_taxable_capped"
+    figs.savefig(outs + ".pdf"); figs.savefig(outs + ".png", dpi=150); plt.close(figs)
 
     print(f"{'year':>4} {'model($M)':>13} {'bench($M)':>13} {'mdl/bn':>7}   "
           f"{'MDunc/wk':>9} {'ASSunc/wk':>9} {'unc mdl/AS':>10} {'inf%':>5}")
