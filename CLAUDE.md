@@ -53,9 +53,24 @@ python code/cross_sections/estimate_cross_sections.py [--jobs N] [--rho R] [--rh
 # stage 2 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
 python code/cross_sections/extrapolate_params.py
 
-python code/cross_sections/plot_aggregate_taxable_extrapolated.py   # END-TO-END validation: model vs ASS+TR, capped AND uncapped
+python code/cross_sections/agg_tax_total_visualization.py   # END-TO-END validation: model vs ASS+TR, capped AND uncapped
 python code/cross_sections/param_visualization.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
+python code/cross_sections/plot_uncapped_mean_vs_ass.py     # IN-SAMPLE constraint check: unconstrained MLE vs constrained, both vs ASS
+python code/cross_sections/cross_section_visualization.py [age] [cohort] [sex] [--year Y] [--refit] [--overlay]   # one cell: histogram + fitted density
 ```
+
+The two per-figure scripts read the CSVs, so they are seconds, not minutes.
+`plot_uncapped_mean_vs_ass.py` compares `cross_section_params.csv` (stage-0, unconstrained)
+against `cross_section_params_smoothed.csv` on the *exact* quantity stage 3 drives — same cells,
+same `n`-share weights, same analytic `dpln_mean`/`mix_mean` — so it reads the constraint
+directly rather than through the extrapolation and TR worker counts. Two things it shows that
+the end-to-end figure does not: the unconstrained fit overshoots the benchmark by up to **3.5×**
+in the tight-cap 1950s–60s (mean ratio 1.33 over 1951–2006 vs **0.9955** constrained), and it
+puts up to **15% of a year's workers in α≤1 cells whose uncapped mean is infinite** (374 of 3326
+men's cells; zero after the joint solve). Those cells are dropped and the weights renormalized,
+so the unconstrained line is a *lower bound* wherever the shaded share is positive.
+`cross_section_visualization.py` defaults to the pipeline parameters; `--refit` fits the cell
+standalone and `--overlay` draws both, which is how to see what smoothing changed in one cell.
 
 **Stage 1** (`estimate_cross_sections.py`) implements the `smoothed-constrained-mle` skill:
 per `(year, sex, single-year age)` cell (~6.4k cells, ≥1000 obs each), fit the censored

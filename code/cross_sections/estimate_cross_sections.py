@@ -114,7 +114,7 @@ def load_year(year):
 
 def ass_uncapped_target():
     """ASS average UNCAPPED earnings per covered worker ($/worker) per year -- the published
-    mean the censored MLE can't see (mass above the cap). Matches plot_aggregate_taxable_extrapolated."""
+    mean the censored MLE can't see (mass above the cap). Matches agg_tax_total_visualization."""
     d = pd.read_excel(ASS_XLSX, sheet_name="data")
     tot = d["aggearn_tot_wage"].fillna(0) + d["aggearn_tot_se"].fillna(0)   # $M
     return {int(y): float(t) * 1e6 / (float(nw) * 1e3)
