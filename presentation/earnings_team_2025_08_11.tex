@@ -2,7 +2,7 @@
 
 % ----------------------------------------------------------------------
 % Earnings Team --- 08/11/2026
-% Cross-sectional earnings estimation: replacing the old procedure
+% 1. New cross-sectional estimation  2. What CMS did  3. What we should do
 %
 % Compile with XeLaTeX (metropolis + Fira Sans):
 %   xelatex earnings_team_2025_08_11.tex
@@ -29,14 +29,22 @@
 \newcommand{\LOWC}{c_{\text{lo}}}
 \newcommand{\HIGHC}{c_{\text{hi}}}
 \newcommand{\negll}{\operatorname{negll}}
+\newcommand{\Var}{\operatorname{Var}}
 
-\title{Cross-Sectional Earnings Estimation}
+% figures live in output/<section>/ (works from presentation/ or project root)
+\graphicspath{{../output/}{output/}}
+
+\title{Earnings: Cross-Sections \& Dynamics}
 \subtitle{Earnings Team}
 \date{August 11, 2026}
 
 \begin{document}
 
 \maketitle
+
+% ======================================================================
+\section{A new method to estimate earnings cross-sections}
+% ======================================================================
 
 % ======================================================================
 % Slide 1 --- What changed and why
@@ -54,14 +62,14 @@
   \vfill
   \begin{columns}[c]
     \begin{column}{0.48\textwidth}\centering
-      \figph{5.0}{2.7}{Old procedure\\(multi-source)}
+      \includegraphics[width=0.78\linewidth]{cross_sections/men_dpln_2000.pdf}
 
-      {\footnotesize Old: many samples stitched together}
+      {\footnotesize Example cell fit: men 2000, dPlN}
     \end{column}
     \begin{column}{0.48\textwidth}\centering
-      \figph{5.0}{2.7}{New procedure\\(SSA microdata only)}
+      \includegraphics[width=0.78\linewidth]{cross_sections/women_mixture_2000.pdf}
 
-      {\footnotesize New: single sample + extrapolation}
+      {\footnotesize Example cell fit: women 2000, lognormal mixture}
     \end{column}
   \end{columns}
 \end{frame}
@@ -207,10 +215,12 @@
 % ======================================================================
 \begin{frame}{Raw parameter estimates}
   \begin{center}
-    \figph{11.0}{5.0}{Raw per-cell parameter surfaces\\(cohort $\times$ age heatmaps, by sex)}
+    \includegraphics[height=0.68\textheight]{cross_sections/param_heatmaps_men.pdf}
   \end{center}
+  \vspace{-4pt}
   \begin{center}\footnotesize
-    Stage-0 per-cell MLE --- note the regime-switching noise across adjacent cells.
+    Stage-0 per-cell MLE, men --- note the regime-switching speckle across adjacent cells
+    (women's mixture surfaces analogous).
   \end{center}
 \end{frame}
 
@@ -219,8 +229,9 @@
 % ======================================================================
 \begin{frame}{Smoothed parameter estimates}
   \begin{center}
-    \figph{11.0}{5.0}{Smoothed parameter surfaces\\(penalized + mean-constrained)}
+    \includegraphics[height=0.68\textheight]{cross_sections/param_heatmaps_men_smoothed.pdf}
   \end{center}
+  \vspace{-4pt}
   \begin{center}\footnotesize
     After the joint solve --- roughness penalty and mean constraint applied \emph{together};
     coherent surfaces, realistic tails.
@@ -232,11 +243,118 @@
 % ======================================================================
 \begin{frame}{Implied aggregate totals vs.\ ASS / TR}
   \begin{center}
-    \figph{11.0}{5.0}{Model-implied aggregate taxable totals\\vs.\ ASS / Trustees Report totals}
+    \includegraphics[height=0.72\textheight]{cross_sections/aggregate_taxable_extrapolated.pdf}
   \end{center}
+  \vspace{-4pt}
   \begin{center}\footnotesize
     End-to-end validation: extrapolated model vs.\ published totals, capped and uncapped.
   \end{center}
+\end{frame}
+
+% ======================================================================
+\section{What did CMS do?}
+% ======================================================================
+
+% ======================================================================
+% Slide 9 --- CMS overview
+% ======================================================================
+\begin{frame}{CMS (JF 2025): the earnings process in four steps}
+  \small
+  \begin{enumerate}
+    \item \textbf{Keep every GKOS (2021) stochastic component} --- mixture AR(1) $z$, mixture
+      transitory $\varepsilon$, HIP $(\alpha_i,\beta_i)$, state-dependent nonemployment $\nu$ ---
+      estimated on \emph{male} SSA data, \emph{jointly with a latent} $g(t)$, behind
+      sample-selection filters.
+    \item \textbf{Swap out $g(t)$}: cubic in age fit to GKSW (2017) \textbf{cohort $\times$
+      gender} profiles of mean log earnings, normalized by average economy-wide earnings.
+    \item \textbf{Simulate}, relative to the SSA wage index:
+      {\small
+      \begin{align*}
+        y_{it} &= \tilde g_{c,s}(t) + \alpha_i + \beta_i t + z_{it} + \varepsilon_{it}
+          \ \alert{-\ \tfrac12\bigl[\Var(z_t)+\Var(\alpha+\beta t)+\Var(\varepsilon)\bigr]}\\
+        Y_{it} &= W_i\,(1-\nu_{it})\,e^{y_{it}}\,\big/\,\alert{(1-\bar\nu_t)},
+          \qquad W_i = 0 \text{ for 10\% of men, 20\% of women}
+      \end{align*}}%
+    \item \textbf{Assign}: match paths to SCF workers by (year, age, gender, income bin);
+      apply SSA tax + benefit formulas $\Rightarrow$ Social Security wealth.
+  \end{enumerate}
+  \smallskip
+  {\footnotesize The \alert{red} terms are the two corrections; $W_i$ targets the SCF share of
+  retirees who never receive benefits (Deaton--Paxson).\par}
+\end{frame}
+
+% ======================================================================
+% Slide 10 --- why the corrections
+% ======================================================================
+\begin{frame}{Why the two corrections --- and why GKOS never needed them}
+  \small
+  Goal: match the \textbf{exponentiated data moment in levels},
+  $\ \mathbb{E}[Y_{it}\mid a,s,c] = e^{\tilde g(a)}$.
+  \begin{itemize}
+    \item[\textbf{1.}] \textbf{Jensen.} The shocks are zero-mean \emph{in logs}, not in levels:
+      $\ \mathbb{E}\,e^{\tilde g + x} = e^{\tilde g}\,\mathbb{E}\,e^{x}
+        \approx e^{\tilde g + \Var(x)/2}$,
+      a 40--90\% overshoot at GKOS variances. Subtracting $\Var(x)/2$ restores
+      $\mathbb{E}\,e^{y}=e^{\tilde g}$ (exact for Gaussians; mixtures $\Rightarrow$ approximation).
+    \item[\textbf{2.}] \textbf{Nonemployment.} $\tilde g$ is measured \emph{on workers}, so
+      unemployment's drag on the mean is already inside it. Applying $(1-\nu)$ again would
+      double-count: $\ \mathbb{E}[(1-\nu)e^{y}] \approx (1-\bar\nu)\,e^{\tilde g}$
+      $\Rightarrow$ divide by $(1-\bar\nu)$
+      (exact up to $\operatorname{cov}(\nu,e^{x})$ --- $\nu$ hits low-$z$ workers).
+  \end{itemize}
+  \smallskip
+  \textbf{Is this because the other parameters were calibrated in levels? Exactly.}
+  GKOS estimate $g(t)$ \emph{jointly} with the shocks, matching moments of simulated
+  \textbf{levels}, so $\mathbb{E}\,e^{x}$ and the nonemployment drag are
+  \alert{absorbed into the fitted $g(t)$}. Pin $\tilde g$ externally and reuse the shocks, and
+  nothing absorbs them --- the corrections re-impose \emph{by hand} what joint estimation did
+  automatically.
+  \smallskip
+
+  {\footnotesize Caveat: CMS's anchor is $\exp(\text{mean log})$ --- a \emph{geometric} mean ---
+  so corrected levels still sit $\approx e^{-\Var(x)/2}$ below the arithmetic-mean profile.\par}
+\end{frame}
+
+% ======================================================================
+\section{What should we do?}
+% ======================================================================
+
+% ======================================================================
+% Slide 11 --- ordinal transform makes the CMS layer inert
+% ======================================================================
+\begin{frame}{Under an ordinal transform, the whole CMS layer is inert}
+  Within a (year, sex, age) cell, $\tilde g(t)$, the Jensen term, and $(1-\bar\nu)^{-1}$ are
+  \textbf{common location/scale shifts}: within-cell \textbf{ranks never see them}, and
+  rank-mapping onto target marginals cancels them \emph{exactly}.
+  \begin{center}
+    \includegraphics[height=0.52\textheight]{dynamics/gkos_ordinal_transform_moments.pdf}
+  \end{center}
+  \vspace{-8pt}
+  {\footnotesize GKOS benchmark, estimated vs.\ flat $g(t)$, shared draws: raw moments differ
+  (gray), transformed panels \textbf{bit-identical} (orange on blue). Post-transform, dynamics
+  $=f(\text{copula},\text{marginals})$. \hfill \texttt{code/dynamics/simulate\_gkos\_ordinal.py}\par}
+\end{frame}
+
+% ======================================================================
+% Slide 12 --- three options
+% ======================================================================
+\begin{frame}{Three ways forward}
+  \begin{itemize}
+    \item[\textbf{(a)}] \textbf{GKOS dynamics $\times$ our fitted cross-sections, ordinal
+      transform.} Marginals exact by construction --- gender, cohort, censoring-aware, pinned to
+      ASS. Nothing from CMS to replicate: it is all inert under the transform. \emph{Cost:}
+      growth/IRF moments become emergent (re-check post-transform); male copula for women.
+    \item[\textbf{(b)}] \textbf{Implement CMS correctly, no transform.} Self-contained process,
+      keeps GKOS's dynamic fit. \emph{Cost:} cross-sections mean-pinned at best --- shapes inherit
+      the latent-vs-selected mismatch; still male dynamics for women; duplicates what Part 1
+      already does better.
+    \item[\textbf{(c)}] \textbf{Estimate our own dynamics on the EPUF panel}, combine with the
+      fitted cross-sections. EPUF \emph{is} a panel: copula and marginals from the same sample,
+      gender-specific dynamics. \emph{Cost:} top-coding + rounding limit what is estimable;
+      the most work.
+  \end{itemize}
+  \textbf{Recommendation:} \alert{(a) now}, validating dynamic moments after the transform;
+  \textbf{(c) as the upgrade}; (b) is dominated.
 \end{frame}
 
 \end{document}
