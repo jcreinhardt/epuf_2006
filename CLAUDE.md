@@ -145,7 +145,7 @@ bullets below are how to keep it.
   slots, and E[X] is exponential in them, so by Jensen it biases the aggregate mean **down** —
   which η cannot undo, per the above. So ρ must be small enough that the smoothed fit still
   *overshoots*. `SMOOTH_FRAC = 1e-4` was chosen from a **5-point sweep of full re-solves**
-  (`output/cross_sections/rho_sweep_ass_tr_ratios.png`), which is also the recipe for retuning it:
+  (`output/cross_sections/plots/rho_sweep_ass_tr_ratios.png`), which is also the recipe for retuning it:
 
   | SMOOTH_FRAC | in-sample uncapped mean [min–max] |
   |---|---|

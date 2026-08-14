@@ -19,7 +19,7 @@ hide the structure everywhere else. Cells below the fit's MIN_N are absent from
 the CSV and render blank.
 
   python code/cross_sections/plot_param.py [men|women|both]
-    -> output/cross_sections/param_heatmaps_{men,women}.pdf (+ .png)
+    -> output/cross_sections/plots/param_heatmaps_{men,women}.pdf (+ .png)
 """
 import sys
 from pathlib import Path
@@ -31,7 +31,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 PARAMS = Path("output/cross_sections/cross_section_params.csv")
-OUTDIR = Path("output/cross_sections")
+OUTDIR = Path("output/cross_sections/plots")
 
 # per-sex panel plan: (column, human label, colormap, log-color?). Well-identified
 # location/scale first, the wandering nuisance params next, diagnostics last.

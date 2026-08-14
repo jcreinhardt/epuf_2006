@@ -48,7 +48,7 @@ A dashed diagnostic overlays the OLD fixed-2000-04-composition aggregate, so the
 gain from using observed composition is visible directly.
 
   python code/cross_sections/plot_agg_tax_total.py
-    -> output/cross_sections/aggregate_taxable_extrapolated.pdf (+ .png)
+    -> output/cross_sections/plots/aggregate_taxable_extrapolated.pdf (+ .png)
 """
 import io
 import subprocess
@@ -435,7 +435,7 @@ def main():
     fig.suptitle("Aggregate earnings: EPUF & extrapolated model vs ASS+TR — capped (top) and uncapped (bottom)",
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    outp = "output/cross_sections/aggregate_taxable_extrapolated"
+    outp = "output/cross_sections/plots/aggregate_taxable_extrapolated"
     fig.savefig(outp + ".pdf"); fig.savefig(outp + ".png", dpi=150); plt.close(fig)
 
     # Slide cut: the capped comparison only (levels + ratio). The uncapped row is the
@@ -446,7 +446,7 @@ def main():
         panel_levels(bx1, bench, epuf, yr, m, y_lo, y_hi, ass_last, slide=True)
         panel_ratio(bx2, bench, epuf, years, model, y_lo, y_hi, ass_last, slide=True)
         figs.tight_layout()
-    outs = "output/cross_sections/aggregate_taxable_capped"
+    outs = "output/cross_sections/plots/aggregate_taxable_capped"
     figs.savefig(outs + ".pdf"); figs.savefig(outs + ".png", dpi=150); plt.close(figs)
 
     print(f"{'year':>4} {'model($M)':>13} {'bench($M)':>13} {'mdl/bn':>7}   "

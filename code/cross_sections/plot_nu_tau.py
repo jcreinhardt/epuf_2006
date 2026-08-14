@@ -12,8 +12,8 @@ both CSVs. With per-figure limits the smoothed panel gets its own (narrower) sca
 comparison shows nothing but the rescaling.
 
   python code/cross_sections/plot_nu_tau.py
-    -> output/cross_sections/nu_tau_men.pdf (+ .png)          raw stage-0 fits
-       output/cross_sections/nu_tau_men_smoothed.pdf (+ .png) after the joint solve
+    -> output/cross_sections/plots/nu_tau_men.pdf (+ .png)          raw stage-0 fits
+       output/cross_sections/plots/nu_tau_men_smoothed.pdf (+ .png) after the joint solve
 """
 import sys
 from pathlib import Path
@@ -30,7 +30,7 @@ from plot_param import heatmap
 
 RAW      = Path("output/cross_sections/cross_section_params.csv")
 SMOOTHED = Path("output/cross_sections/cross_section_params_smoothed.csv")
-OUTDIR   = Path("output/cross_sections")
+OUTDIR   = Path("output/cross_sections/plots")
 SEX      = 1                                # nu/tau are the men's dPlN parameters
 PANELS   = [("nu",  r"$\nu$  (log-location)", "viridis"),
             ("tau", r"$\tau$  (log-scale)",   "viridis")]

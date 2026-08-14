@@ -34,7 +34,7 @@ and run in parallel -- skill Sec.1,7):
   python code/cross_sections/estimate_cross_sections.py [--jobs N] [--rho R] [--rho-steps S]
     -> output/cross_sections/cross_section_params_smoothed.csv   (smoothed+constrained; feeds extrapolate)
        output/cross_sections/cross_section_params.csv            (raw stage-0 fits; for the raw heatmap)
-       param_heatmaps_{men,women}{,_smoothed}.pdf/.png           (raw vs penalized surfaces)
+       plots/param_heatmaps_{men,women}{,_smoothed}.pdf/.png     (raw vs penalized surfaces)
 """
 import os
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",

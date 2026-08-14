@@ -20,7 +20,7 @@ script and is useful for seeing what the smoothing and the mean constraint chang
   python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]
     age defaults to 40, cohort to 1950, sex to 2 (female); sex accepts 1/2 or male/female.
     (age 40, cohort 1950 -> year 1990.)  --year Y sets the year directly (cohort = Y - age).
-    -> output/cross_sections/<women_mixture|men_dpln>_c<cohort>_a<age>.pdf (+ .png)
+    -> output/cross_sections/plots/<women_mixture|men_dpln>_c<cohort>_a<age>.pdf (+ .png)
 """
 import argparse
 import sys
@@ -103,7 +103,7 @@ def pipeline_row(year, sex, age, params=PARAMS):
 def plot_cross_section(age=40, cohort=1950, sex=2, refit=False, overlay=False):
     """Plot the (age, cohort, sex) earnings cross-section (year = cohort + age).
 
-    Returns the path of the PDF written under output/cross_sections/."""
+    Returns the path of the PDF written under output/cross_sections/plots/."""
     year = cohort + age
     x = cf.load_earnings(year, sex, age=age)
     if x.size == 0:
@@ -164,7 +164,7 @@ def plot_cross_section(age=40, cohort=1950, sex=2, refit=False, overlay=False):
                  f"raw EPUF data vs fitted {MODEL_NAME[sex]}", fontsize=11)
     ax.legend(frameon=False, fontsize=9, loc="upper left")
     fig.tight_layout()
-    stem = f"output/cross_sections/{FILE_TAG[sex]}_c{cohort}_a{age}"
+    stem = f"output/cross_sections/plots/{FILE_TAG[sex]}_c{cohort}_a{age}"
     fig.savefig(stem + ".pdf"); fig.savefig(stem + ".png", dpi=150)
     plt.close(fig)
     print(f"wrote {stem}.pdf and .png")

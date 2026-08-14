@@ -123,7 +123,7 @@ epuf_2006/
 │       ├── crosssec_fit.py                # shared (year, sex[, age]) fitters: dPlN (men) + lognormal mixture (women)
 │       ├── estimate_cross_sections.py     # stage 1: joint smoothed-constrained MLE → cross_section_params{,_smoothed}.csv
 │       ├── extrapolate_params.py          # stage 2: extrapolate off the data edges → cross_section_params_extrapolated.csv
-│       ├── plot_cross_section.py          # raw histogram + fitted density, one (age, cohort, sex) cell → output/cross_sections/
+│       ├── plot_cross_section.py          # raw histogram + fitted density, one (age, cohort, sex) cell → output/cross_sections/plots/
 │       ├── plot_param.py                  # cohort×age heatmaps of every fitted/smoothed parameter
 │       └── plot_agg_tax_total.py          # aggregate earnings, capped + uncapped: extrapolated model vs EPUF vs ASS+TR
 ├── processed_data/
@@ -136,10 +136,11 @@ epuf_2006/
     └── cross_sections/
         ├── cross_section_params.csv           # stage-1 fitted params (+ info_*), one row per year × sex × single-year age (≥1000 obs)
         ├── cross_section_params_smoothed.csv  # stage-2 smoothed params (feeds the downstream polynomial extrapolation)
-        ├── {women_mixture,men_dpln}_c<cohort>_a<age>.{pdf,png}
-        ├── param_heatmaps_{men,women}{,_smoothed}.{pdf,png}
-        ├── compare_men_<yearA>_<yearB>.{pdf,png}
-        └── aggregate_taxable{,_smoothed}.{pdf,png}
+        └── plots/                             # all figures
+            ├── {women_mixture,men_dpln}_c<cohort>_a<age>.{pdf,png}
+            ├── param_heatmaps_{men,women}{,_smoothed}.{pdf,png}
+            ├── compare_men_<yearA>_<yearB>.{pdf,png}
+            └── aggregate_taxable{,_smoothed}.{pdf,png}
 ```
 
 `raw_data/` and `processed_data/` are large and are not version-controlled; regenerate the

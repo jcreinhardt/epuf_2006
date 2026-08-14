@@ -73,8 +73,8 @@ model average carries the identical composition (edge cohorts are age-truncated 
 1957/2013 window; equivalently every age mixes a different cohort set).
 
   python code/cross_sections/plot_guv_comparison.py
-    -> output/cross_sections/guv_comparison_{men,women}.pdf (+ .png)         by cohort
-    -> output/cross_sections/guv_comparison_byage_{men,women}.pdf (+ .png)   by age
+    -> output/cross_sections/plots/guv_comparison_{men,women}.pdf (+ .png)         by cohort
+    -> output/cross_sections/plots/guv_comparison_byage_{men,women}.pdf (+ .png)   by age
     -> output/cross_sections/guv_comparison_{cohort,age}_means.csv
 """
 import sys
@@ -126,7 +126,8 @@ def nl_cdf_s(y, a, b, nu, tau):
 
 GUV_DIR   = Path("raw_data/guv_quantiles")
 PARAMS    = Path("output/cross_sections/cross_section_params_extrapolated.csv")
-OUT_DIR   = Path("output/cross_sections")
+OUT_DIR   = Path("output/cross_sections")            # the two *_means.csv
+PLOT_DIR  = Path("output/cross_sections/plots")      # the four figures
 BASE_YEAR = 2013
 
 QUANTS  = [0.10, 0.25, 0.50, 0.75, 0.90, 0.98]
@@ -344,9 +345,9 @@ def plot_figures(d_all, bycol):
         fig.tight_layout(rect=(0, 0.01, 1, 0.96))
         suffix = "" if by_cohort else "_byage"
         for ext in ("pdf", "png"):
-            fig.savefig(OUT_DIR / f"guv_comparison{suffix}_{name}.{ext}", dpi=150)
+            fig.savefig(PLOT_DIR / f"guv_comparison{suffix}_{name}.{ext}", dpi=150)
         plt.close(fig)
-        print(f"wrote {OUT_DIR}/guv_comparison{suffix}_{name}.pdf (+ .png)")
+        print(f"wrote {PLOT_DIR}/guv_comparison{suffix}_{name}.pdf (+ .png)")
 
 
 if __name__ == "__main__":
