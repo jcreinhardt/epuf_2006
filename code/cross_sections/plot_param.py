@@ -94,7 +94,7 @@ def plot_sex(df, sex, suffix=""):
         ax.set_ylabel("age", fontsize=8)
         ax.tick_params(labelsize=7)
 
-    kind = "smoothed" if suffix else "fitted"
+    kind = suffix.lstrip("_").replace("_", " ") if suffix else "fitted"
     fig.suptitle(f"{kind.capitalize()} cross-section parameters by cohort x age -- {SEXLABEL[sex]}\n"
                  "clean gradient = well identified;  speckle = weakly identified "
                  "(color limits clipped to 2-98 pct)", fontsize=12)

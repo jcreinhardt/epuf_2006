@@ -47,8 +47,16 @@ row: it is top-coded, so it has no uncapped mean to plot.
 A dashed diagnostic overlays the OLD fixed-2000-04-composition aggregate, so the in-sample
 gain from using observed composition is visible directly.
 
-  python code/cross_sections/plot_agg_tax_total.py
-    -> output/cross_sections/plots/aggregate_taxable_extrapolated.pdf (+ .png)
+  python code/cross_sections/plot_agg_tax_total.py [params_csv] [tag]
+    -> output/cross_sections/plots/aggregate_taxable_extrapolated[_tag].pdf (+ .png)
+       output/cross_sections/plots/aggregate_taxable_capped[_tag].pdf (+ .png)
+
+`params_csv` swaps the parameter surface (e.g. cross_section_params_guvgmm_smoothed.csv);
+`tag` suffixes the output files so alternative surfaces sit next to the canonical figures.
+Years whose cells cover under 85% of that year's worker composition (e.g. the guvgmm
+surface's 2007-13 rows, which exist for ages 25-55 only) are EXCLUDED from the model
+series with a note -- summing a partial age range against a full-population benchmark
+would just measure the missing ages.
 """
 import io
 import subprocess
@@ -88,6 +96,9 @@ def model_mean_taxable(row, taxmax):
 
 
 PARAMS = Path("output/cross_sections/cross_section_params_extrapolated.csv")
+TAG    = ""                                          # "_<tag>" suffix on the output files
+COVER_MIN = 0.85    # a year enters the model series only if its cells carry at least this
+                    # share of the year's (sex, age) worker composition
 TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
 ASS_XLSX = Path("raw_data/annual_statistical_supplement.xlsx")
 DB      = cf.DB
@@ -382,6 +393,23 @@ def main():
     comp_by_year, back, fwd = composition_by_year(counts, years)
     y_lo, y_hi = BACK[0], DATA_LAST                      # observed-composition window
 
+    # coverage guard: drop years whose cells carry too little of the composition
+    # (partial-age surfaces, e.g. guvgmm's ages-25-55-only 2007-13 rows)
+    have = {(int(r.year), int(r.sex), int(r.age)) for r in df.itertuples()}
+    keep = []
+    for y in years:
+        share = sum(f for (s, a), f in comp_by_year[y].items() if (y, s, a) in have)
+        if share >= COVER_MIN:
+            keep.append(y)
+    if len(keep) < len(years):
+        dropped = sorted(set(years) - set(keep))
+        print(f"NOTE: {len(dropped)} years excluded for partial age coverage "
+              f"(<{COVER_MIN:.0%} of composition): {dropped[:8]}"
+              + (" ..." if len(dropped) > 8 else ""))
+        years = keep
+        taxmax = {y: taxmax[y] for y in years}
+        comp_by_year = {y: comp_by_year[y] for y in years}
+
     means = model_means(PARAMS, taxmax)
     model = agg_composed(means, taxmax, comp_by_year, cov)   # observed comp in-sample, fixed off-sample
 
@@ -435,7 +463,7 @@ def main():
     fig.suptitle("Aggregate earnings: EPUF & extrapolated model vs ASS+TR — capped (top) and uncapped (bottom)",
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    outp = "output/cross_sections/plots/aggregate_taxable_extrapolated"
+    outp = f"output/cross_sections/plots/aggregate_taxable_extrapolated{TAG}"
     fig.savefig(outp + ".pdf"); fig.savefig(outp + ".png", dpi=150); plt.close(fig)
 
     # Slide cut: the capped comparison only (levels + ratio). The uncapped row is the
@@ -446,7 +474,7 @@ def main():
         panel_levels(bx1, bench, epuf, yr, m, y_lo, y_hi, ass_last, slide=True)
         panel_ratio(bx2, bench, epuf, years, model, y_lo, y_hi, ass_last, slide=True)
         figs.tight_layout()
-    outs = "output/cross_sections/plots/aggregate_taxable_capped"
+    outs = f"output/cross_sections/plots/aggregate_taxable_capped{TAG}"
     figs.savefig(outs + ".pdf"); figs.savefig(outs + ".png", dpi=150); plt.close(figs)
 
     print(f"{'year':>4} {'model($M)':>13} {'bench($M)':>13} {'mdl/bn':>7}   "
@@ -463,4 +491,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        PARAMS = Path(sys.argv[1])
+    if len(sys.argv) > 2:
+        TAG = "_" + sys.argv[2].lstrip("_")
     main()

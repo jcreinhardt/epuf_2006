@@ -72,10 +72,16 @@ actually present in the Guvenen file and use equal cell weights ON BOTH SIDES, s
 model average carries the identical composition (edge cohorts are age-truncated by the
 1957/2013 window; equivalently every age mixes a different cohort set).
 
-  python code/cross_sections/plot_guv_comparison.py
-    -> output/cross_sections/plots/guv_comparison_{men,women}.pdf (+ .png)         by cohort
-    -> output/cross_sections/plots/guv_comparison_byage_{men,women}.pdf (+ .png)   by age
-    -> output/cross_sections/guv_comparison_{cohort,age}_means.csv
+  python code/cross_sections/plot_guv_comparison.py [params_csv] [tag]
+    -> output/cross_sections/plots/guv_comparison_{men,women}[_tag].pdf (+ .png)       by cohort
+    -> output/cross_sections/plots/guv_comparison_byage_{men,women}[_tag].pdf (+ .png) by age
+    -> output/cross_sections/guv_comparison_{cohort,age}_means[_tag].csv
+
+`params_csv` swaps the parameter surface (e.g. cross_section_params_guvgmm.csv, or the
+pure-GMM cross_section_params_guvgmm_lam1.csv); `tag` suffixes every output file so
+alternative fits sit next to the canonical figures instead of overwriting them. An
+alternative surface without 2007-2013 rows just drops those guv cells (with a warning),
+so its by-age averages mix years 1957-2006 only.
 """
 import sys
 from pathlib import Path
@@ -128,6 +134,7 @@ GUV_DIR   = Path("raw_data/guv_quantiles")
 PARAMS    = Path("output/cross_sections/cross_section_params_extrapolated.csv")
 OUT_DIR   = Path("output/cross_sections")            # the two *_means.csv
 PLOT_DIR  = Path("output/cross_sections/plots")      # the four figures
+TAG       = ""                                       # "_<tag>" suffix on every output file
 BASE_YEAR = 2013
 
 QUANTS  = [0.10, 0.25, 0.50, 0.75, 0.90, 0.98]
@@ -299,7 +306,7 @@ def main():
     allcols = [f"{c}_{s}" for c in FUNCTIONALS for s in ("sel0", "mod")]
     for bycol, stub in (("cohort", "cohort"), ("age", "age")):
         agg = merged.groupby(["sex", bycol])[allcols].mean().reset_index()
-        agg.to_csv(OUT_DIR / f"guv_comparison_{stub}_means.csv", index=False)
+        agg.to_csv(OUT_DIR / f"guv_comparison_{stub}_means{TAG}.csv", index=False)
         plot_figures(agg, bycol)
 
 
@@ -345,10 +352,14 @@ def plot_figures(d_all, bycol):
         fig.tight_layout(rect=(0, 0.01, 1, 0.96))
         suffix = "" if by_cohort else "_byage"
         for ext in ("pdf", "png"):
-            fig.savefig(PLOT_DIR / f"guv_comparison{suffix}_{name}.{ext}", dpi=150)
+            fig.savefig(PLOT_DIR / f"guv_comparison{suffix}_{name}{TAG}.{ext}", dpi=150)
         plt.close(fig)
-        print(f"wrote {PLOT_DIR}/guv_comparison{suffix}_{name}.pdf (+ .png)")
+        print(f"wrote {PLOT_DIR}/guv_comparison{suffix}_{name}{TAG}.pdf (+ .png)")
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        PARAMS = Path(sys.argv[1])
+    if len(sys.argv) > 2:
+        TAG = "_" + sys.argv[2].lstrip("_")
     main()

@@ -12,16 +12,26 @@ Everything is closed form (weighted normal pdf/cdf, or Normal-Laplace via Mills
 ratios), so the censored likelihood has no integrals. duckdb via the CLI, per
 repo convention.
 
-Each fitter's objective is the censored negll plus, when supplied, two coupling
-terms used by the joint smoothed-constrained solve (estimate_cross_sections.py):
+Each fitter's objective is the censored negll plus, when supplied, coupling terms:
   - mean_pen=(eta, w)      -- eta*w*E[X](theta): the aggregate-uncapped-mean pull
     (mean-constrained-mle skill). Separable across cells given one scalar eta/year.
+    Used by the joint smoothed-constrained solve (estimate_cross_sections.py).
   - smooth_pen=(wvec, gt)  -- Sum_j wvec_j (g_j(theta) - gt_j)^2: a weighted quadratic
     pull of the fitted distribution's FUNCTIONALS g (not raw params) toward a
     neighbour-implied target (smoothed-constrained-mle skill, Gauss-Seidel reduction
     of the roughness penalty). g is regime-invariant, so it survives the mixture's
     component flips and the dPlN body/tail reparameterizations; wvec already folds in
     the per-year rho, the frozen Omega and the robust (Huber) reweight from the driver.
+    Added AFTER the gmm_pen convex combination, so it composes with either objective
+    and survives lam=1; when gmm_pen is on, the caller must therefore supply wvec in
+    the PER-OBSERVATION composite units (divide summed-likelihood-units weights by n).
+  - gmm_pen=(lam, qfun)    -- CONVEX COMBINATION, not an additive penalty: the objective
+    becomes (1-lam)*negll/n + lam*qfun(theta), with qfun a scalar GMM criterion on the
+    internal theta (estimate_cross_sections_gmm.py builds it from the Guvenen sel0
+    cohort x age targets). negll is divided by n so lam weighs a PER-OBSERVATION
+    log-likelihood against the moment criterion and means the same thing in every cell.
+    For the dPlN it also floors alpha at ALPHA_MIN (like mean_pen): a fit headed for
+    alpha<=1 has an infinite uncapped mean that would poison every downstream aggregate.
 
 g_dpln / g_mix share one 6-slot layout -- [E logY, sd logY, skew logY, logit S(cap),
 lower tail, upper tail] -- so a single rho means the same thing for both sexes. Every
@@ -174,7 +184,8 @@ def dpln_theta(r):                  # pack a fitted dPlN result into a warm-star
     return [np.log(r["alpha"]), np.log(r["beta"]), r["nu"], np.log(r["tau"])]
 
 
-def fit_dpln(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
+def fit_dpln(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None, gmm_pen=None,
+             opts=None):
     """Fit the dPlN by censored MLE. `start` (a theta from dpln_theta) warm-starts the
     optimizer as a single local solve; None runs a small multi-start (moment start plus a
     low- and a high-alpha seed that straddle the two basins of the weakly-identified upper
@@ -183,7 +194,8 @@ def fit_dpln(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
     `mean_pen=(eta, w)` adds eta*w*E[X](theta) -- the analytic uncapped mean -- a one-sided
     downward pull on the tail toward the published aggregate; log-alpha is then bounded so
     alpha>1 (finite mean). `smooth_pen=(wvec, g_target)` adds the weighted-quadratic pull of
-    g_dpln toward its neighbour target. See module docstring."""
+    g_dpln toward its neighbour target. `gmm_pen=(lam, qfun)` switches the objective to the
+    convex combination (1-lam)*negll/n + lam*qfun(theta). See module docstring."""
     yi, n_low, n_high = censor_split(x, lowc, highc)
     yc, wc = bin_interior(yi)
     tlo, thi = np.log(lowc), np.log(highc)
@@ -203,6 +215,12 @@ def fit_dpln(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
             if not np.isfinite(mth):
                 return 1e18
             val += eta * w * mth
+        if gmm_pen is not None:
+            lam, qfun = gmm_pen
+            q = qfun(theta)
+            if not np.isfinite(q):
+                return 1e18
+            val = (1.0 - lam) * val / x.size + lam * q
         if smooth_pen is not None:
             wv, gt = smooth_pen
             d = g_dpln(theta, thi) - gt
@@ -217,20 +235,22 @@ def fit_dpln(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
     # log-earnings range: in a ~75%-censored cell the interior carries almost no shape information
     # and tau can run away, and E[X] ~ exp(nu + tau^2/2) then overflows to inf, which poisons the
     # year's aggregate. Under the mean pull alpha is additionally floored at ALPHA_MIN > 1, where
-    # E[X] ~ 1/(alpha-1) stays finite in both pull directions.
-    amin = np.log(ALPHA_MIN) if mean_pen is not None else np.log(0.05)
+    # E[X] ~ 1/(alpha-1) stays finite in both pull directions; the GMM criterion keeps the same
+    # floor so every guv-disciplined cell has a finite downstream uncapped mean.
+    amin = np.log(ALPHA_MIN) if (mean_pen is not None or gmm_pen is not None) else np.log(0.05)
     bnds = [(amin, np.log(500.0)), (np.log(0.05), np.log(500.0)),
             (NU_LO, NU_HI), (np.log(TAU_MIN), np.log(TAU_MAX))]
 
     if start is not None:
-        seeds, opts = [start], WARM_OPTS       # warm inner-loop solve: near-optimal, stop early
+        seeds = [start]                        # warm inner-loop solve: near-optimal, stop early
+        opts = opts or WARM_OPTS               # (caller may tighten via opts=)
     else:
         m, s = yi.mean(), yi.std()
         a0, b0, nu0, tau0 = _mom_start(yi)
         seeds = [[np.log(a0), np.log(b0), nu0, np.log(tau0)],   # moment start
                  [np.log(3.0),  0.0, m, np.log(s)],             # low-alpha basin
                  [np.log(30.0), 0.0, m, np.log(s)]]             # high-alpha ridge
-        opts = COLD_OPTS
+        opts = opts or COLD_OPTS
     res = None
     for seed in seeds:
         r = minimize(obj, seed, method="L-BFGS-B", bounds=bnds, options=opts)
@@ -324,12 +344,14 @@ def g_mix(theta, logcap):
     return np.array([m, sd, c3 / sd ** 3, float(_logit(S)), lo_, hi])
 
 
-def fit_mixture(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
+def fit_mixture(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None, gmm_pen=None,
+                opts=None):
     """Fit the lognormal mixture by censored MLE. `start` (a theta from mix_theta) warm-starts
     a single local solve; None runs the deterministic 6-point restart grid. `mean_pen`/`smooth_pen`
     add the uncapped-mean pull and the g_mix smoothness pull (module docstring); the SAME per-year
     eta the men carry thins the women's over-heavy censored tail so both sexes hit the aggregate
-    jointly."""
+    jointly. `gmm_pen=(lam, qfun)` switches the objective to the convex combination
+    (1-lam)*negll/n + lam*qfun(theta) (module docstring)."""
     yi, n_low, n_high = censor_split(x, lowc, highc)
     yc, wc = bin_interior(yi)
     tlo, thi = np.log(lowc), np.log(highc)
@@ -346,6 +368,12 @@ def fit_mixture(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
         if mean_pen is not None:
             eta, w = mean_pen
             val += eta * w * mix_mean(*_unpack(theta))
+        if gmm_pen is not None:
+            lam, qfun = gmm_pen
+            q = qfun(theta)
+            if not np.isfinite(q):
+                return 1e18
+            val = (1.0 - lam) * val / x.size + lam * q
         if smooth_pen is not None:
             wv, gt = smooth_pen
             d = g_mix(theta, thi) - gt
@@ -360,7 +388,8 @@ def fit_mixture(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
     lo, hi = np.log(SIG_MIN - SIG_FLOOR), np.log(SIG_MAX - SIG_FLOOR)
     bnds = [(4.0, 13.0), (4.0, 13.0), (lo, hi), (lo, hi), (None, None)]
     if start is not None:
-        best = minimize(obj, start, method="L-BFGS-B", bounds=bnds, options=WARM_OPTS)
+        best = minimize(obj, start, method="L-BFGS-B", bounds=bnds,
+                        options=(opts or WARM_OPTS))
     else:
         m, s = yi.mean(), yi.std()
         ls = np.log(max(0.7 * s - SIG_FLOOR, 1e-3))
@@ -368,7 +397,8 @@ def fit_mixture(x, lowc, highc, start=None, mean_pen=None, smooth_pen=None):
         for w0 in (0.3, 0.5, 0.7):
             for d in (0.4, 0.9):
                 theta0 = [m + d * s, m - d * s, ls, ls, np.log(w0 / (1 - w0))]
-                res = minimize(obj, theta0, method="L-BFGS-B", bounds=bnds, options=COLD_OPTS)
+                res = minimize(obj, theta0, method="L-BFGS-B", bounds=bnds,
+                               options=(opts or COLD_OPTS))
                 if best is None or res.fun < best.fun:
                     best = res
 
