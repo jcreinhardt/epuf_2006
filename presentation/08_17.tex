@@ -1,0 +1,87 @@
+% Brief report, 2026-08-17. Compile from the PROJECT ROOT (figure paths are root-relative):
+%   xelatex -output-directory=presentation presentation/08_17.tex   (run twice)
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+\usepackage[font=small,labelfont=bf]{caption}
+
+\begin{document}
+
+\section{Capped vs.\ uncapped mean earnings}
+
+Extrapolating the fitted cross-sections forward in time, we hold the \emph{shape} of each
+cell's distribution constant and shift only its location with the wage index. To see
+whether that is a reasonable assumption we compare the ASS uncapped and capped (taxable)
+mean earnings per worker: with the taxable maximum indexed to wages (1975 onward), a
+constant shape keeps this ratio flat, so its drift reflects shape change --- in
+particular in the upper tail. Figure~\ref{fig:ratio} shows the ratio over 1937--2022.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=.8\textwidth]{output/cross_sections/plots/ass_uncapped_capped_ratio.pdf}
+\caption{Ratio of ASS uncapped to capped (taxable) mean covered earnings per worker.}
+\label{fig:ratio}
+\end{figure}
+
+\section{Estimation}
+
+Each (year, sex, single-year age) cell's objective is a \emph{convex combination} of the
+censored log-likelihood of the EPUF microdata and a GMM criterion on the corresponding
+cohort~$\times$~age statistics of Guvenen, Kaplan, Song and Weidner (AEJ:\ Applied 2022;
+GKSW), with weight $\lambda=\tfrac12$ on each part. The GMM side targets ten statistics
+per cell: the mean, standard deviation, skewness and kurtosis of log earnings, and the
+$p10$, $p25$, $p50$, $p75$, $p90$, $p98$ quantiles, all for earnings above GKSW's
+selection floor of $260\times$ the nominal minimum wage. The fitted distributions are a
+double Pareto-lognormal for men and a two-component lognormal mixture for women.
+
+\paragraph{The two datasets differ.} GKSW's statistics come from the 1\% CWHS and use
+wage and salary income (W-2 Box~1 from 1978) of commerce-and-industry workers ---
+self-employment is excluded (their footnote~10: available only from 1978 and top-coded
+until 1994), and above-cap earnings are uncensored from 1978 (imputed before) ---
+winsorized at the 99.999th percentile. EPUF records Social-Security-covered earnings of
+\emph{all} covered workers, including covered self-employment, top-coded at the taxable
+maximum and random-rounded. Figure~\ref{fig:qval} computes the same quantiles from both
+sources under the identical selection floor, aggregated by cohort over the complete age
+range 25--55 and using only cohorts with no cell censored at the cap; $p98$ (and $p90$
+for men) are left out because they are never observed in EPUF.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=.92\textwidth]{output/cross_sections/plots/guv_quantile_validation_men.pdf}\\[2pt]
+\includegraphics[width=.92\textwidth]{output/cross_sections/plots/guv_quantile_validation_women.pdf}
+\caption{GKSW sel0 quantiles vs the same quantiles in raw EPUF (men top, women bottom).}
+\label{fig:qval}
+\end{figure}
+
+\section{Model vs.\ GKSW (2022)}
+
+Figure~\ref{fig:guvcomp} aggregates the ten targeted statistics by cohort --- an
+equal-weight average over each cohort's ages 25--55 --- and plots the GKSW data against
+the same functionals computed from the fitted model, for men and women.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=.95\textwidth]{output/cross_sections/plots/guv_comparison_men_guvgmm_smoothed.pdf}\\[2pt]
+\includegraphics[width=.95\textwidth]{output/cross_sections/plots/guv_comparison_women_guvgmm_smoothed.pdf}
+\caption{GKSW cohort~$\times$~age functionals (blue) vs the fitted model (orange), by
+cohort: men (top) and women (bottom).}
+\label{fig:guvcomp}
+\end{figure}
+
+\section{Aggregates}
+
+Figure~\ref{fig:agg} shows total taxable (capped) earnings and the uncapped mean
+earnings per worker implied by the model against the published ASS series (spliced onto
+the Trustees Report projection after 2022). Neither moment is targeted by the
+estimation. Cells are aggregated with the observed EPUF (sex, age) composition of
+positive earners in each year, scaled to the published covered-worker totals; off-sample
+years hold the composition fixed at the nearest observed edge (the 1951--55 average
+backward, the 2000--04 average forward).
+
+\begin{figure}[h!]\centering
+\includegraphics[width=.98\textwidth]{output/cross_sections/plots/aggregate_taxable_extrapolated_guvgmm_extrapolated.pdf}
+\caption{Aggregate taxable earnings vs ASS+TR (top row) and uncapped mean earnings per
+worker vs ASS (bottom row), 1937--2100.}
+\label{fig:agg}
+\end{figure}
+
+\end{document}

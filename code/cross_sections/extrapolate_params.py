@@ -56,8 +56,17 @@ growth), and the handful of sparse in-sample cells the fitter skipped. The retir
 handling: shape is frozen per age and the location shifts per age, so nothing is ever
 fit across ages and each age keeps its own 2000-2004 profile (retirement ages included).
 
-  python code/cross_sections/extrapolate_params.py [--y0 1937] [--y1 2100]
-    -> output/cross_sections/cross_section_params_extrapolated.csv
+  python code/cross_sections/extrapolate_params.py [--y0 1937] [--y1 2100] [in_csv] [out_csv]
+    -> output/cross_sections/cross_section_params_extrapolated.csv   (canonical default)
+
+`in_csv`/`out_csv` swap the parameter surface, e.g. the guvgmm smoothed surface ->
+cross_section_params_guvgmm_extrapolated.csv. Rows with n = 0 (the guvgmm surface's
+pure-GMM 2007-13 cells, which carry GKSW's W-2 concept and cover ages 25-55 only) are
+DROPPED on load: the off-sample years stay wage-index extrapolations of the EPUF-concept
+edge, concept-consistent with the ASS/TR benchmark the extrapolation feeds. NOTE for
+unconstrained inputs (guvgmm): the pre-1951 alpha calibration still matches the ASS
+uncapped mean exactly, so a visible step remains at the 1950/51 splice wherever the
+in-sample 1951-55 edge itself overshoots the benchmark.
 """
 import io
 import subprocess
@@ -287,14 +296,18 @@ def build(df, y0, y1):
     return full, {"scale": a_scale, "fit": cal_fit}
 
 
-def main(y0=Y0, y1=Y1):
-    df = pd.read_csv(IN)
+def main(y0=Y0, y1=Y1, params=IN, out=OUT):
+    df = pd.read_csv(params)
+    if "n" in df.columns and (df["n"] == 0).any():
+        n0 = int((df["n"] == 0).sum())
+        print(f"NOTE: dropping {n0} data-free rows (n=0: pure-GMM guv-only cells) on load")
+        df = df[df["n"] > 0]
     full, cal = build(df, y0, y1)
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    full.to_csv(OUT, index=False)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    full.to_csv(out, index=False)
 
     n_kept = ((full["year"] >= 1951) & (full["year"] <= DATA_LAST)).sum()
-    print(f"wrote {len(full)} rows -> {OUT}")
+    print(f"wrote {len(full)} rows -> {out}")
     print(f"  years {y0}-{y1}, cohorts {int(full.cohort.min())}-{int(full.cohort.max())}")
     print(f"  in-sample (iterated, verbatim-where-present): "
           f"{n_kept} cells over 1951-{DATA_LAST}")
@@ -314,7 +327,14 @@ def main(y0=Y0, y1=Y1):
 
 if __name__ == "__main__":
     kw = {}
+    argv = sys.argv[1:]
     for flag, key, cast in [("--y0", "y0", int), ("--y1", "y1", int)]:
-        if flag in sys.argv:
-            kw[key] = cast(sys.argv[sys.argv.index(flag) + 1])
+        if flag in argv:
+            i = argv.index(flag)
+            kw[key] = cast(argv[i + 1])
+            del argv[i:i + 2]
+    if argv:
+        kw["params"] = Path(argv[0])
+    if len(argv) > 1:
+        kw["out"] = Path(argv[1])
     main(**kw)

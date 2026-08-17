@@ -128,8 +128,11 @@ def main():
 
 def plot_sex(d, name):
     BLUE, GREEN = "#2a78d6", "#1e9e64"        # GKSW keeps its comparison-figure color
+    # only quantiles ever observed in EPUF under the complete-cohort rule: p98 never is
+    # (no cohort clears the cap at all 31 ages), and neither is men's p90
+    show = [c for c in QCOLS[:-1] if not (name == "men" and c == "p90")]
     fig, axes = plt.subplots(2, 3, figsize=(15, 8.5))
-    for ax, c in zip(axes.flat, QCOLS):
+    for ax, c in zip(axes.flat, show):
         ax.plot(d["cohort"], d[f"{c}_guv"], color=BLUE, lw=1.8,
                 marker="o", ms=2.6, label="GKSW sel0 (published)")
         ax.plot(d["cohort"], d[f"{c}_epuf"], color=GREEN, lw=1.8, ls="--",
@@ -139,16 +142,17 @@ def plot_sex(d, name):
         ax.grid(True, lw=0.4, alpha=0.4)
         ax.set_ylim(bottom=0)
     handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=2, fontsize=11, frameon=False,
-               bbox_to_anchor=(0.5, 0.0))
+    for ax in axes.flat[len(show):]:
+        ax.axis("off")
+    axes.flat[len(show)].legend(handles, labels, loc="center", fontsize=11, frameon=False)
     fig.suptitle(f"GKSW sel0 quantiles vs raw EPUF quantiles -- {name}\n"
                  "COMPLETE cohorts only: every point averages the full age range 25-55 "
                  "(GKSW within 1957-2013, EPUF within 1957-2006);\nEPUF additionally "
                  "requires no cell censored at the taxable maximum; level gaps = "
                  "data-concept wedge",
                  fontsize=12)
-    fig.supxlabel("cohort (year turning age 25)", fontsize=11, y=0.055)
-    fig.tight_layout(rect=(0, 0.07, 1, 0.91))
+    fig.supxlabel("cohort (year turning age 25)", fontsize=11)
+    fig.tight_layout(rect=(0, 0.01, 1, 0.91))
     for ext in ("pdf", "png"):
         fig.savefig(PLOT_DIR / f"guv_quantile_validation_{name}.{ext}", dpi=150)
     plt.close(fig)
