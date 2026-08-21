@@ -1,0 +1,42 @@
+% Brief report, 2026-08-24. Compile from the PROJECT ROOT (figure paths are root-relative):
+%   xelatex -output-directory=presentation/08_24 presentation/08_24/08_24.tex   (run twice)
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+\usepackage[font=small,labelfont=bf]{caption}
+
+\begin{document}
+
+\section{How much of the data is censored}
+
+Every cross-section fit is doubly Type-I censored: earnings at or above
+$\mathrm{HIGHC} = \mathrm{taxmax}(\text{year}) - \$1000$ enter the likelihood only as
+``somewhere above the cap''. Figure~\ref{fig:censshare} shows how much of each cell that
+is --- the share $n_{\text{high}}/n$ of a (year, sex, single-year-age) cell at the
+taxable maximum --- on a birth-cohort~$\times$~age grid, so a calendar year runs along an
+anti-diagonal and a single cohort's life-cycle path reads straight up a column. Both
+panels share one color scale, so men and women are directly comparable. Cells are the
+estimation sample (those with at least 1000 positive-earnings observations); cells
+outside it are blank.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/censored_share_cohort_age.pdf}
+\caption{Share of workers with earnings at the taxable maximum, i.e.\ censored for the
+purposes of estimation, by birth cohort and age. Empirical shares from EPUF, not the
+fitted $P(\text{at cap})$.}
+\label{fig:censshare}
+\end{figure}
+
+The bright band is the tight-cap era of the 1950s and 1960s: at its peak roughly
+$78\%$ of prime-age men in a cell are at the cap, and the average across men's cells over
+the whole sample is $28\%$ (women: $7.9\%$, peaking at $34\%$). Where the band is bright
+the cell's own observations say almost nothing about the upper tail --- the interior
+holds only the quarter of the distribution below the cap --- which is why the tail there
+is pinned by the aggregate constraint rather than identified locally. The band fades
+after the 1972 amendments indexed the taxable maximum to wages: from 1980 on the censored
+share averages $10.9\%$ across men's cells (at most $32\%$, in the peak-earning ages) and
+$2.0\%$ across women's, and the fits are correspondingly informative about the tail.
+
+\end{document}

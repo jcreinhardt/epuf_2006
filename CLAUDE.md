@@ -55,6 +55,7 @@ python code/cross_sections/extrapolate_params.py
 
 python code/cross_sections/plot_agg_tax_total.py   # END-TO-END validation: model vs ASS+TR, capped AND uncapped
 python code/cross_sections/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
+python code/cross_sections/plot_censored_share.py [csv]   # cohort×age heatmap of the share censored at the cap
 python code/cross_sections/plot_cross_section.py [age] [cohort] [sex] [--year Y] [--refit] [--overlay]   # one cell: histogram + fitted density
 ```
 
