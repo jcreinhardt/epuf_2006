@@ -18,14 +18,18 @@ Model side: cell_functionals() from plot_guv_comparison -- log-moments by quadra
 the fitted log-density, quantiles by root-finding on the CDF, conditional on
 X >= Ymin(t) = 260 x nominal minwage (the sel0 screen), deflated to real 2013 dollars.
 
-Gap definition, chosen so a single color scale means one thing:
-  meanlog, p10-p98  ->  100 x (log model - log data), i.e. LOG POINTS, since dollar
-                        quantiles span an order of magnitude across the sample and a
-                        raw dollar gap would just re-plot the price level;
-  sdlog/skew/kurt   ->  model - data in native units (already scale-free).
-Sign convention throughout: POSITIVE = model above data. The colormap is diverging and
-centered on zero -- a signed gap read on a sequential scale hides the sign, which is
-the one thing this figure exists to show.
+Gap: model minus data, on an ABSOLUTE scale in each functional's own units -- real 2013
+dollars for the quantiles, log units for meanlog and sdlog, dimensionless for skewness
+and kurtosis. Sign convention throughout: POSITIVE = model above data. The colormap is
+diverging and centered on zero -- a signed gap read on a sequential scale hides the sign,
+which is the one thing this figure exists to show.
+
+One figure per functional, men and women side by side on ONE shared symmetric color
+scale, so the two sexes are directly comparable within the figure. Note what an absolute
+dollar scale implies for the quantile figures: the price level rises over the window, so
+a constant proportional error grows in dollars, and the color limits (98th percentile of
+|gap|, robust to a few runaway cells) are set by the later, richer cells. Early-cohort
+cells will therefore look quiet even where the proportional miss is large.
 
 Read the level gaps with the concept wedge in mind: GKSW measure W-2 wage and salary
 income of commerce-and-industry workers, EPUF measures covered earnings of all covered
@@ -38,8 +42,8 @@ Cells right of the dashed line use post-2006 EXTRAPOLATED parameters (stage 2), 
 fitted ones.
 
   python code/cross_sections/plot_guv_gap_heatmaps.py [--params CSV] [--tag T] [--reuse]
-    -> output/cross_sections/plots/guv_gap_moments_{men,women}[_T].pdf   (+ .png)
-    -> output/cross_sections/plots/guv_gap_quantiles_{men,women}[_T].pdf (+ .png)
+    -> output/cross_sections/plots/guv_gap_<functional>[_T].pdf (+ .png), one per
+       functional in meanlog, sdlog, skewlog, kurtlog, p10, p25, p50, p75, p90, p98
     -> output/cross_sections/guv_gap_cells[_T].csv    (per-cell model, data and gap)
 
 --reuse skips the ~1 min of quadrature/root-finding and replots from that CSV.
@@ -64,12 +68,13 @@ OUT_DIR  = Path("output/cross_sections")
 PLOT_DIR = Path("output/cross_sections/plots")
 LAST_FIT_YEAR = 2006            # beyond this the parameters are extrapolated, not fitted
 
-# log-point functionals: gap = 100 * (log model - log data). meanlog is already a log,
-# so it joins the dollar quantiles rather than the shape moments.
-LOGPT = ["meanlog"] + QCOLS
 LABEL = {"meanlog": "mean log earnings", "sdlog": "sd log earnings",
          "skewlog": "skewness of log earnings", "kurtlog": "kurtosis of log earnings",
          **{q: f"{q} of earnings" for q in QCOLS}}
+# the gap's units: dollar quantiles in real dollars, the rest in the moment's own units
+UNIT = {**{q: f"real {BASE_YEAR} dollars" for q in QCOLS},
+        "meanlog": "log units", "sdlog": "log units",
+        "skewlog": "", "kurtlog": ""}
 SEXNAME = {1: "men", 2: "women"}
 
 # minimal theme, matching plot_censored_share.py
@@ -119,14 +124,15 @@ def build_cells(params):
     d = guv.rename(columns={c: f"{c}_dat" for c in FUNCTIONALS}).merge(
         pd.DataFrame(rows), on=["year", "sex", "age"], how="inner")
     d["yob"] = d["year"] - d["age"]                 # BIRTH cohort, repo convention
+    return d
+
+
+def add_gaps(d):
+    """Absolute gap, model minus data, in each functional's own units. Derived here and
+    not stored in the cells CSV, so --reuse can never replot a stale gap definition
+    against a changed one."""
     for c in FUNCTIONALS:
-        mod, dat = d[f"{c}_mod"], d[f"{c}_dat"]
-        if c == "meanlog":                          # already a log: differencing is enough
-            d[f"{c}_gap"] = 100.0 * (mod - dat)
-        elif c in LOGPT:                            # dollar quantiles: log ratio
-            d[f"{c}_gap"] = 100.0 * (np.log(mod) - np.log(dat))
-        else:
-            d[f"{c}_gap"] = mod - dat
+        d[f"{c}_gap"] = d[f"{c}_mod"] - d[f"{c}_dat"]
     return d
 
 
@@ -157,48 +163,33 @@ def _lims(d, cols):
 
 
 def _grid(d, cols):
+    """Pivots keyed by (sex, functional), on one shared cohort x age frame."""
     xlim = (d["yob"].min() - 0.5, d["yob"].max() + 0.5)
     ylim = (d["age"].min() - 0.5, d["age"].max() + 0.5)
-    return {c: d.pivot(index="age", columns="yob", values=f"{c}_gap") for c in cols}, xlim, ylim
+    pivs = {(sex, c): g.pivot(index="age", columns="yob", values=f"{c}_gap")
+            for sex, g in d.groupby("sex") for c in cols}
+    return pivs, xlim, ylim
 
 
-def plot_moments(d, sex, tag):
-    """Four shape/level moments; each has its own units, so each gets its own scale."""
-    sub = d[d["sex"] == sex]
-    pivs, xlim, ylim = _grid(sub, MCOLS)
-    fig, axes = plt.subplots(1, 4, figsize=(15.5, 3.9), sharey=True)
-    for ax, c in zip(axes, MCOLS):
-        vmax = _lims(sub, [c])
-        mesh = _panel(ax, pivs[c], vmax, xlim, ylim)
-        unit = "log points" if c in LOGPT else "model \u2212 data"
-        ax.set_title(f"{LABEL[c]}\n({unit})")     # unit in the title: a colorbar label
-        ax.set_xlabel("Birth cohort")             # here reads as the next panel's y-label
-        cb = fig.colorbar(mesh, ax=ax, fraction=0.046, pad=0.03)
-        cb.outline.set_visible(False)
-        cb.ax.tick_params(length=2.5, width=0.5, color="0.35", labelsize=8)
-    axes[0].set_ylabel("Age")
-    _save(fig, f"guv_gap_moments_{SEXNAME[sex]}{tag}")
-
-
-def plot_quantiles(d, sex, tag):
-    """Six quantiles on ONE shared scale -- whether the model misses more in the tails
-    than in the middle is the comparison this figure has to preserve."""
-    sub = d[d["sex"] == sex]
-    pivs, xlim, ylim = _grid(sub, QCOLS)
-    vmax = _lims(sub, QCOLS)
-    fig, axes = plt.subplots(2, 3, figsize=(12.5, 6.6), sharex=True, sharey=True)
-    for ax, c in zip(axes.flat, QCOLS):
-        mesh = _panel(ax, pivs[c], vmax, xlim, ylim)
-        ax.set_title(LABEL[c])
-    for ax in axes[1]:
+def plot_functional(d, c, tag):
+    """One figure per functional: men | women, one shared symmetric color scale so the
+    two sexes are directly comparable (the panels are otherwise unreadable against each
+    other -- that comparison is the point of putting them side by side)."""
+    pivs, xlim, ylim = _grid(d, [c])
+    vmax = _lims(d, [c])
+    fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.0), sharex=True, sharey=True)
+    for ax, sex in zip(axes, (1, 2)):
+        mesh = _panel(ax, pivs[(sex, c)], vmax, xlim, ylim)
+        ax.set_title(SEXNAME[sex].capitalize())
         ax.set_xlabel("Birth cohort")
-    for ax in axes[:, 0]:
-        ax.set_ylabel("Age")
+    axes[0].set_ylabel("Age")
+
+    unit = f", {UNIT[c]}" if UNIT[c] else ""
     cb = fig.colorbar(mesh, ax=axes, fraction=0.030, pad=0.02)
-    cb.set_label(f"model \u2212 data, log points (real {BASE_YEAR} dollars)")
+    cb.set_label(f"{LABEL[c]}: model \u2212 data{unit}")
     cb.outline.set_visible(False)
     cb.ax.tick_params(length=2.5, width=0.5, color="0.35")
-    _save(fig, f"guv_gap_quantiles_{SEXNAME[sex]}{tag}")
+    _save(fig, f"guv_gap_{c}{tag}")
 
 
 def _save(fig, stem):
@@ -218,17 +209,15 @@ def main(params=PARAMS, tag="", reuse=False):
         d = build_cells(params)
         d.to_csv(cells_csv, index=False)
         print(f"wrote {cells_csv} ({len(d)} cells)")
+    d = add_gaps(d)
 
-    for sex in (1, 2):
-        sub = d[d["sex"] == sex]
-        print(f"{SEXNAME[sex]}: {len(sub)} cells, cohorts "
-              f"{int(sub['yob'].min())}-{int(sub['yob'].max())}, median signed gap")
-        for c in FUNCTIONALS:
-            unit = "lp" if c in LOGPT else ""
-            print(f"    {c:9s} {sub[f'{c}_gap'].median():+8.3f}{unit}"
-                  f"   (mean abs {sub[f'{c}_gap'].abs().mean():.3f})")
-        plot_moments(d, sex, tag)
-        plot_quantiles(d, sex, tag)
+    print(f"{len(d)} cells, cohorts {int(d['yob'].min())}-{int(d['yob'].max())}, "
+          "ages 25-55; median signed gap (model - data)")
+    for c in FUNCTIONALS:
+        med = d.groupby("sex")[f"{c}_gap"].median()
+        print(f"    {c:9s} men {med[1]:+10.3f}   women {med[2]:+10.3f}   {UNIT[c]}")
+    for c in FUNCTIONALS:
+        plot_functional(d, c, tag)
 
 
 if __name__ == "__main__":

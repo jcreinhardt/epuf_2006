@@ -52,72 +52,126 @@ $X \ge Y_{\min}(t) = 260 \times$ nominal minimum wage, which is the screen \text
 already carries, and deflated with GKSW's own PCE matrix. This is the per-cell version of
 the averaged line plots in \texttt{plot\_guv\_comparison.py}.
 
-Gaps are signed \emph{model minus data}, so the color scale is diverging and centered on
-zero. Mean log earnings and the dollar quantiles are reported in log points
-($100 \times [\log \text{model} - \log \text{data}]$), because dollar quantiles span an
-order of magnitude over the sample and a raw dollar gap would mostly re-plot the price
-level; $\mathrm{sd}$, skewness and kurtosis of logs are already scale-free and are
-differenced directly. Cells to the right of the dashed anti-diagonal are calendar years
-after 2006 and use extrapolated rather than fitted parameters.
+Each functional gets its own figure, men and women side by side on one shared color
+scale. Gaps are signed \emph{model minus data} on an absolute scale in the functional's
+own units --- real 2013 dollars for the quantiles, log units for the mean and standard
+deviation of logs, dimensionless for skewness and kurtosis --- so the colormap is
+diverging and centered on zero, and the limits are symmetric at the 98th percentile of
+$|\text{gap}|$. Cells to the right of the dashed anti-diagonal are calendar years after
+2006 and use extrapolated rather than fitted parameters.
 
-One caveat governs how to read the level panels. GKSW measure W-2 wage and salary income
+Two things follow from the absolute scale and should be kept in mind throughout. First,
+the price level and real earnings both rise across the window, so a constant
+\emph{proportional} error grows in dollars; the color limits on the quantile figures are
+set by the later, richer cells and the early cohorts will look quiet even where the
+relative miss is large. The published $p98$, for instance, has a median of \$112{,}000
+across men's cells in 1957--72 and \$212{,}000 in 1980--2006, so the same dollar gap
+means very different things at the two ends. Second, men's dollar errors are an order of
+magnitude larger than women's, so the shared scale within a figure --- which is what
+makes the two panels comparable --- leaves the women's panel comparatively flat on the
+upper-tail quantiles. That is the true relationship, not a plotting artifact.
+
+One caveat governs the level panels specifically. GKSW measure W-2 wage and salary income
 of commerce-and-industry workers in the CWHS; EPUF measures covered earnings of all
 covered workers. That concept and coverage wedge is worth roughly $7$--$10\%$ in the early
 decades and shrinks as coverage expands, so a systematic negative offset in mean log
-earnings and in the middle quantiles is expected and is not model misfit. The parts that
-speak to fit are the shape functionals and the \emph{curvature} of the quantile gaps
-across the plane.
-
-\begin{figure}[h!]\centering
-\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_moments_men.pdf}\\[4pt]
-\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_moments_women.pdf}
-\caption{Gap between the fitted distributions' log-moments and GKOS (2022), men (top) and
-women (bottom). Each panel carries its own symmetric, robust ($98$th percentile of
-$|\text{gap}|$) color limit because the four functionals have different units.}
-\label{fig:gapmoments}
-\end{figure}
-
-\begin{figure}[h!]\centering
-\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_quantiles_men.pdf}
-\caption{Gap between the fitted distributions' earnings quantiles and GKOS (2022), men.
-All six panels share one color scale, so the comparison across quantiles --- whether the
-model misses more in the tails than in the middle --- survives.}
-\label{fig:gapqmen}
-\end{figure}
-
-\begin{figure}[h!]\centering
-\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_quantiles_women.pdf}
-\caption{Gap between the fitted distributions' earnings quantiles and GKOS (2022), women.
-Same shared color scale convention as Figure~\ref{fig:gapqmen}, but the scale is set
-within the sex.}
-\label{fig:gapqwomen}
-\end{figure}
+earnings and in the middle quantiles is expected and is not model misfit. The shape
+functionals and the \emph{curvature} of the gaps across the plane are the parts that
+speak to fit.
 
 \subsection*{What the panels show}
 
-The middle of the distribution is where the fits do best. Men's $p75$ is within $5$ log
-points of the published value in $66\%$ of cells and $p50$ in $35\%$; for women the same
-figures are $91\%$ and $81\%$. Women's median gap in mean log earnings is $+1.5$ log
-points over the whole plane, i.e.\ essentially the concept wedge and nothing more.
+The middle of the distribution is where the fits do best, and where the two sexes differ
+most. Women's median is within \$2{,}000 of the published value in $97\%$ of cells and
+their gap in mean log earnings has a median of $+0.015$ log units over the whole plane
+--- essentially the concept wedge and nothing more. Men's median is within \$2{,}000 in
+only $37\%$ of cells, sitting about $-0.10$ log units low in mean log earnings
+throughout, which is the larger wedge one expects where covered-versus-W2 coverage
+differences bite hardest.
 
 The tails are where the plane stops being flat, and the pattern lines up with the
-censoring map of Figure~\ref{fig:censshare}. Men's $p98$ is the worst panel by a wide
-margin: its median gap is $-27$ log points over the tight-cap years 1957--72 --- exactly
-the cohorts and ages where three quarters of the cell is at the taxable maximum and the
-upper tail is pinned by the aggregate constraint rather than identified from the cell's
-own observations --- against $-8$ log points over 1980--2006, once the indexed cap leaves
-the top of the distribution visible. Women run the other way, $+36$ log points at $p98$
-in the tight-cap years and $+11$ after 1980: the second mixture component is fitted off a
-thin upper tail and overshoots. In both cases the tail error shrinks by roughly a factor
-of three as the censored share falls, which is the expected signature of a
+censoring map of Figure~\ref{fig:censshare}. Men's $p98$ (Figure~\ref{fig:gap-p98}) is
+the worst panel by a wide margin: a median gap of $-\$25{,}400$ over the tight-cap years
+1957--72 --- exactly the cohorts and ages where three quarters of the cell is at the
+taxable maximum and the upper tail is pinned by the aggregate constraint rather than
+identified from the cell's own observations --- against $-\$16{,}700$ over 1980--2006.
+Against the rising benchmark quoted above, that is a swing from roughly $-23\%$ to
+$-8\%$ of the published $p98$: the dollar gap narrows only modestly, but relative to the
+distribution it is being asked to describe it shrinks by a factor of three. Women run the
+other way, $+\$17{,}600$ at $p98$ in the tight-cap years against $+\$9{,}600$ after
+1980, the second mixture component overshooting off a thin upper tail. In both cases the
+tail error falls as the censored share falls, which is the expected signature of a
 censoring-driven identification problem rather than a wrong parametric family.
 
 Among the shape functionals, men's kurtosis of logs sits systematically below the data
 (median $-0.99$ over the whole plane, $-1.37$ in the tight-cap years), so the fitted
 Normal--Laplace log-density is not heavy-tailed enough where the data are most censored;
-$\mathrm{sd}$ of logs is close throughout (median $+0.026$ for men, $+0.041$ for women).
-The post-2006 extrapolated block behaves noticeably better on the tails than the
-tight-cap block does, which is a statement about the 2000--04 shapes it freezes, not
-independent evidence that the extrapolation is right.
+the standard deviation of logs is close throughout (median $+0.026$ for men, $+0.041$ for
+women). The post-2006 extrapolated block behaves better on the tails than the tight-cap
+block does, which is a statement about the 2000--04 shapes it freezes, not independent
+evidence that the extrapolation is right; note also that it flips the sign of women's
+upper-tail gap, from $+\$9{,}600$ at $p98$ in 1980--2006 to $-\$23{,}300$ after 2006.
+
+\clearpage
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_meanlog.pdf}
+\caption{Model minus data for mean log earnings (log units), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-meanlog}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_sdlog.pdf}
+\caption{Model minus data for standard deviation of log earnings (log units), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-sdlog}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_skewlog.pdf}
+\caption{Model minus data for skewness of log earnings (dimensionless), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-skewlog}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_kurtlog.pdf}
+\caption{Model minus data for kurtosis of log earnings (dimensionless), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-kurtlog}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_p10.pdf}
+\caption{Model minus data for the 10th percentile of earnings (real 2013 dollars), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-p10}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_p25.pdf}
+\caption{Model minus data for the 25th percentile of earnings (real 2013 dollars), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-p25}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_p50.pdf}
+\caption{Model minus data for the median of earnings (real 2013 dollars), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-p50}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_p75.pdf}
+\caption{Model minus data for the 75th percentile of earnings (real 2013 dollars), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-p75}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_p90.pdf}
+\caption{Model minus data for the 90th percentile of earnings (real 2013 dollars), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-p90}
+\end{figure}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{output/cross_sections/plots/guv_gap_p98.pdf}
+\caption{Model minus data for the 98th percentile of earnings (real 2013 dollars), by birth cohort and age. Men and women share one symmetric color scale.}
+\label{fig:gap-p98}
+\end{figure}
 
 \end{document}
