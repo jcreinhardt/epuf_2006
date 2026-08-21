@@ -18,18 +18,29 @@ Model side: cell_functionals() from plot_guv_comparison -- log-moments by quadra
 the fitted log-density, quantiles by root-finding on the CDF, conditional on
 X >= Ymin(t) = 260 x nominal minwage (the sel0 screen), deflated to real 2013 dollars.
 
-Gap: model minus data, on an ABSOLUTE scale in each functional's own units -- real 2013
-dollars for the quantiles, log units for meanlog and sdlog, dimensionless for skewness
-and kurtosis. Sign convention throughout: POSITIVE = model above data. The colormap is
-diverging and centered on zero -- a signed gap read on a sequential scale hides the sign,
-which is the one thing this figure exists to show.
+Gap: model minus data, POSITIVE = model above data throughout. The colormap is diverging
+and centered on zero -- a signed gap read on a sequential scale hides the sign, which is
+the one thing this figure exists to show. One figure per functional, men and women side
+by side on ONE shared symmetric color scale (limits at the 98th percentile of |gap|,
+robust to a few runaway cells), so the two sexes are directly comparable within a figure.
 
-One figure per functional, men and women side by side on ONE shared symmetric color
-scale, so the two sexes are directly comparable within the figure. Note what an absolute
-dollar scale implies for the quantile figures: the price level rises over the window, so
-a constant proportional error grows in dollars, and the color limits (98th percentile of
-|gap|, robust to a few runaway cells) are set by the later, richer cells. Early-cohort
-cells will therefore look quiet even where the proportional miss is large.
+TWO UNIT SYSTEMS, both written by default (--units picks one). They answer different
+questions and neither dominates:
+
+  absolute   -- each functional's own units: real 2013 dollars for the quantiles, log
+                units for meanlog and sdlog, dimensionless for skewness and kurtosis.
+                Says how many dollars the fit is off by. But real earnings rise across
+                the window, so a constant PROPORTIONAL error grows in dollars and the
+                color limits end up set by the later, richer cells -- early cohorts look
+                quiet even where the relative miss is large.
+  logpoints  -- 100 x (log model - log data) for the LEVEL functionals, which puts every
+                year on the same footing and makes the early cohorts readable. Covers
+                meanlog and the six quantiles only (see LOGPT): sd/skewness/kurtosis of
+                logs are already scale-free, so their absolute figure IS their
+                relative figure and no _logpoints duplicate is written for them.
+
+Read either one alongside the other: a cell can be a large dollar miss and a small
+relative one, or the reverse, and the pair is what separates the two.
 
 Read the level gaps with the concept wedge in mind: GKSW measure W-2 wage and salary
 income of commerce-and-industry workers, EPUF measures covered earnings of all covered
@@ -41,12 +52,19 @@ are the parts that speak to fit.
 Cells right of the dashed line use post-2006 EXTRAPOLATED parameters (stage 2), not
 fitted ones.
 
-  python code/cross_sections/plot_guv_gap_heatmaps.py [--params CSV] [--tag T] [--reuse]
-    -> output/cross_sections/plots/guv_gap_<functional>[_T].pdf (+ .png), one per
-       functional in meanlog, sdlog, skewlog, kurtlog, p10, p25, p50, p75, p90, p98
-    -> output/cross_sections/guv_gap_cells[_T].csv    (per-cell model, data and gap)
+This script and its figures live next to the report they belong to rather than under
+code/ + output/, so presentation/08_24/ is self-contained. It is still run FROM THE
+PROJECT ROOT: it reads the shared parameter surface and imports plot_guv_comparison.
 
---reuse skips the ~1 min of quadrature/root-finding and replots from that CSV.
+  python presentation/08_24/plot_guv_gap_heatmaps.py
+        [--params CSV] [--tag T] [--reuse] [--units absolute|logpoints|both]
+    -> presentation/08_24/figures/guv_gap_<functional>[_logpoints][_T].pdf (+ .png),
+       one per functional in meanlog, sdlog, skewlog, kurtlog, p10, p25, p50, p75,
+       p90, p98
+    -> output/cross_sections/guv_gap_cells[_T].csv   (per-cell model and data values --
+       a regenerable cache, not report content, so it stays under output/)
+
+--reuse skips the quadrature/root-finding and replots from that CSV.
 """
 import argparse
 import sys
@@ -64,9 +82,10 @@ from plot_guv_comparison import (BASE_YEAR, FUNCTIONALS, MCOLS, QCOLS,
                                  load_deflator, load_guv, min_wage)
 
 PARAMS   = Path("output/cross_sections/cross_section_params_extrapolated.csv")
-OUT_DIR  = Path("output/cross_sections")
-PLOT_DIR = Path("output/cross_sections/plots")
+OUT_DIR  = Path("output/cross_sections")            # the per-cell CSV: regenerable cache
+PLOT_DIR = Path("presentation/08_24/figures")       # the figures: content of the report
 LAST_FIT_YEAR = 2006            # beyond this the parameters are extrapolated, not fitted
+SUFFIX = {"absolute": "", "logpoints": "_logpoints"}
 
 LABEL = {"meanlog": "mean log earnings", "sdlog": "sd log earnings",
          "skewlog": "skewness of log earnings", "kurtlog": "kurtosis of log earnings",
@@ -75,6 +94,11 @@ LABEL = {"meanlog": "mean log earnings", "sdlog": "sd log earnings",
 UNIT = {**{q: f"real {BASE_YEAR} dollars" for q in QCOLS},
         "meanlog": "log units", "sdlog": "log units",
         "skewlog": "", "kurtlog": ""}
+# The log-point version covers only the LEVEL functionals -- mean log earnings and the
+# dollar quantiles. sd/skewness/kurtosis of logs are already scale-free, so there is
+# nothing to convert: their absolute figure IS their relative figure. (Skewness also
+# changes sign in these data, which rules out a ratio outright.)
+LOGPT = ["meanlog"] + QCOLS
 SEXNAME = {1: "men", 2: "women"}
 
 # minimal theme, matching plot_censored_share.py
@@ -127,12 +151,22 @@ def build_cells(params):
     return d
 
 
-def add_gaps(d):
-    """Absolute gap, model minus data, in each functional's own units. Derived here and
-    not stored in the cells CSV, so --reuse can never replot a stale gap definition
-    against a changed one."""
+def add_gaps(d, units):
+    """Gap, model minus data, under one unit system. Derived here and not stored in the
+    cells CSV, so --reuse can never replot a stale gap definition against a changed one.
+
+    "absolute"   -- each functional's own units (real dollars, log units, dimensionless).
+    "logpoints"  -- 100 x (log model - log data) for the level functionals, which puts
+                    every year on the same footing; the shape moments are already
+                    scale-free and pass through unchanged (see LOGPT)."""
     for c in FUNCTIONALS:
-        d[f"{c}_gap"] = d[f"{c}_mod"] - d[f"{c}_dat"]
+        mod, dat = d[f"{c}_mod"], d[f"{c}_dat"]
+        if units == "absolute" or c not in LOGPT:
+            d[f"{c}_gap"] = mod - dat
+        elif c == "meanlog":            # already a log: differencing gives log points
+            d[f"{c}_gap"] = 100.0 * (mod - dat)
+        else:                           # dollar quantiles: log ratio
+            d[f"{c}_gap"] = 100.0 * (np.log(mod) - np.log(dat))
     return d
 
 
@@ -171,7 +205,7 @@ def _grid(d, cols):
     return pivs, xlim, ylim
 
 
-def plot_functional(d, c, tag):
+def plot_functional(d, c, units, tag):
     """One figure per functional: men | women, one shared symmetric color scale so the
     two sexes are directly comparable (the panels are otherwise unreadable against each
     other -- that comparison is the point of putting them side by side)."""
@@ -184,12 +218,12 @@ def plot_functional(d, c, tag):
         ax.set_xlabel("Birth cohort")
     axes[0].set_ylabel("Age")
 
-    unit = f", {UNIT[c]}" if UNIT[c] else ""
+    u = "log points" if (units == "logpoints" and c in LOGPT) else UNIT[c]
     cb = fig.colorbar(mesh, ax=axes, fraction=0.030, pad=0.02)
-    cb.set_label(f"{LABEL[c]}: model \u2212 data{unit}")
+    cb.set_label(f"{LABEL[c]}: model \u2212 data" + (f", {u}" if u else ""))
     cb.outline.set_visible(False)
     cb.ax.tick_params(length=2.5, width=0.5, color="0.35")
-    _save(fig, f"guv_gap_{c}{tag}")
+    _save(fig, f"guv_gap_{c}{SUFFIX[units]}{tag}")
 
 
 def _save(fig, stem):
@@ -200,7 +234,7 @@ def _save(fig, stem):
     print(f"wrote {PLOT_DIR}/{stem}.pdf (+ .png)")
 
 
-def main(params=PARAMS, tag="", reuse=False):
+def main(params=PARAMS, tag="", reuse=False, unit_systems=("absolute", "logpoints")):
     cells_csv = OUT_DIR / f"guv_gap_cells{tag}.csv"
     if reuse:
         d = pd.read_csv(cells_csv)
@@ -209,15 +243,19 @@ def main(params=PARAMS, tag="", reuse=False):
         d = build_cells(params)
         d.to_csv(cells_csv, index=False)
         print(f"wrote {cells_csv} ({len(d)} cells)")
-    d = add_gaps(d)
 
     print(f"{len(d)} cells, cohorts {int(d['yob'].min())}-{int(d['yob'].max())}, "
-          "ages 25-55; median signed gap (model - data)")
-    for c in FUNCTIONALS:
-        med = d.groupby("sex")[f"{c}_gap"].median()
-        print(f"    {c:9s} men {med[1]:+10.3f}   women {med[2]:+10.3f}   {UNIT[c]}")
-    for c in FUNCTIONALS:
-        plot_functional(d, c, tag)
+          "ages 25-55")
+    for units in unit_systems:
+        add_gaps(d, units)
+        print(f"median signed gap (model - data), {units}:")
+        for c in FUNCTIONALS:
+            if units == "logpoints" and c not in LOGPT:
+                continue                  # scale-free already: would duplicate the
+            med = d.groupby("sex")[f"{c}_gap"].median()   # absolute figure byte for byte
+            u = "log points" if units == "logpoints" else UNIT[c]
+            print(f"    {c:9s} men {med[1]:+10.3f}   women {med[2]:+10.3f}   {u}")
+            plot_functional(d, c, units, tag)
 
 
 if __name__ == "__main__":
@@ -226,5 +264,7 @@ if __name__ == "__main__":
     p.add_argument("--tag", default="")
     p.add_argument("--reuse", action="store_true",
                    help="replot from an existing guv_gap_cells CSV instead of refitting")
+    p.add_argument("--units", choices=("absolute", "logpoints", "both"), default="both")
     a = p.parse_args()
-    main(a.params, ("_" + a.tag.lstrip("_")) if a.tag else "", a.reuse)
+    systems = ("absolute", "logpoints") if a.units == "both" else (a.units,)
+    main(a.params, ("_" + a.tag.lstrip("_")) if a.tag else "", a.reuse, systems)

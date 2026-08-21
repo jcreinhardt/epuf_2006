@@ -16,8 +16,11 @@ The share is the empirical one actually used in estimation, not the model's
 P(at cap), and the cells are exactly the estimation sample (>= MIN_N = 1000
 observations); cells outside it are blank.
 
-  python code/cross_sections/plot_censored_share.py [csv]
-    -> output/cross_sections/plots/censored_share_cohort_age.pdf (+ .png)
+This script and its figure live next to the report they belong to, but are still run
+FROM THE PROJECT ROOT (the parameter CSV path is root-relative).
+
+  python presentation/08_24/plot_censored_share.py [csv]
+    -> presentation/08_24/figures/censored_share_cohort_age.pdf (+ .png)
 """
 import sys
 from pathlib import Path
@@ -29,7 +32,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 PARAMS = Path("output/cross_sections/cross_section_params.csv")
-OUTDIR = Path("output/cross_sections/plots")
+OUTDIR = Path("presentation/08_24/figures")
 SEXLABEL = {1: "Men", 2: "Women"}
 
 # minimal theme: thin hairline frame, no grid, no bold, sans throughout

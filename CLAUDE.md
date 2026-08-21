@@ -55,10 +55,24 @@ python code/cross_sections/extrapolate_params.py
 
 python code/cross_sections/plot_agg_tax_total.py   # END-TO-END validation: model vs ASS+TR, capped AND uncapped
 python code/cross_sections/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
-python code/cross_sections/plot_censored_share.py [csv]   # cohort×age heatmap of the share censored at the cap
-python code/cross_sections/plot_guv_gap_heatmaps.py [--params CSV] [--tag T] [--reuse]   # cohort×age heatmaps of model-minus-GKOS(2022) moments/quantiles
 python code/cross_sections/plot_cross_section.py [age] [cohort] [sex] [--year Y] [--refit] [--overlay]   # one cell: histogram + fitted density
 ```
+
+Two cohort×age heatmap scripts live with the report they were written for
+(`presentation/08_24/`) rather than under `code/` + `output/`, so that folder is
+self-contained. They are still run **from the project root** and write into
+`presentation/08_24/figures/`:
+
+```bash
+python presentation/08_24/plot_censored_share.py [csv]   # share of a cell censored at the cap
+python presentation/08_24/plot_guv_gap_heatmaps.py [--params CSV] [--tag T] [--reuse] [--units absolute|logpoints|both]
+```
+
+`plot_guv_gap_heatmaps.py` compares the fitted surface against the GKSW/GKOS 2022
+cohort×age file per cell (the per-cell version of `plot_guv_comparison.py`'s averaged
+lines), one figure per functional with men and women side by side, in **both** absolute
+units and log points. The log-point set covers the level functionals only — sd/skew/kurt
+of logs are already scale-free, so no duplicate is written.
 
 The per-figure scripts read the CSVs, so they are seconds, not minutes. `plot_cross_section.py`
 defaults to the pipeline parameters; `--refit` fits the cell standalone and `--overlay` draws

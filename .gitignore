@@ -45,3 +45,7 @@ presentation/**/*.nav
 presentation/**/*.out
 presentation/**/*.snm
 presentation/**/*.toc
+
+# ...but a report's own figures, written next to it by the plotting code that lives in
+# the same folder, are the report's content and not a build product.
+!presentation/**/figures/*.pdf
