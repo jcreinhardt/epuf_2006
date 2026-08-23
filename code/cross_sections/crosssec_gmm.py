@@ -22,7 +22,7 @@ units the fitters minimize, the year's joint objective is
 
 -- every cell's composite data term plus the SAME robust (Huber) second-difference
 roughness penalty along age, on the same regime-invariant functionals g(theta), reusing
-estimate_cross_sections.py's machinery wholesale: stage 0 fits plus top-K g-deduped basin
+crosssec_mle.py's machinery wholesale: stage 0 fits plus top-K g-deduped basin
 candidates at each guv cell's FROZEN final W; Omega and rho frozen once, globally, from
 the stage-0 fits; Viterbi basin selection at the target rho (node cost = the cell's data
 term in J); rho-continuation Gauss-Seidel sweeps. The guv-anchored cells are stiff (10
@@ -55,7 +55,7 @@ than unsmoothed censored MLE suggests. Gauss-Seidel refits run at REFIT_OPTS (ti
 than WARM_OPTS, whose gtol is calibrated to summed-likelihood scale and can stall on the
 per-observation composite objective).
 
-DELIBERATELY ABSENT (vs estimate_cross_sections.py): the per-year aggregate-mean
+DELIBERATELY ABSENT (vs crosssec_mle.py, --mode mle): the per-year aggregate-mean
 constraint. Nothing here pins the uncapped aggregate: smoothing log-scale g slots biases
 level aggregates DOWN (Jensen), and inside the guv window levels follow GKSW's W-2
 concept anyway. Don't feed this surface to EPUF-denominated aggregate validation
@@ -109,7 +109,7 @@ early decades. Efficient weighting makes this BIND HARDER: meanlog's sampling sd
 ~sigma/sqrt(n) ~ 0.008, so the concept wedge is dozens of sd's and the GMM term will
 spend fit freely to close it. Levels are not concept-robust; the shape functionals are.
 
-  python code/cross_sections/estimate_cross_sections_gmm.py [--jobs N] [--lam L]
+  python code/cross_sections/estimate_cross_sections.py --mode mle-gmm [--jobs N] [--lam L]
         [--gmm-iters K] [--out CSV] [--no-smooth] [--rho R] [--smooth-frac F]
     -> output/cross_sections/cross_section_params_guvgmm_smoothed.csv  (default)
        output/cross_sections/cross_section_params_guvgmm.csv           (--no-smooth default)
@@ -133,11 +133,11 @@ from scipy.special import ndtr, log_ndtr
 from scipy.optimize import brentq, minimize
 
 import crosssec_fit as cf
-import estimate_cross_sections as ec
-from estimate_cross_sections import (load_year, basin_starts,
+import crosssec_mle as ec
+from crosssec_mle import (load_year, basin_starts,
                                      freeze_omega_rho, viterbi, smooth_pen)
-from plot_guv_comparison import (load_guv, load_deflator, min_wage,
-                                 nl_logpdf_s, nl_cdf_s, _bracket, QUANTS, QCOLS)
+from guv_targets import (load_guv, load_deflator, min_wage,
+                         nl_logpdf_s, nl_cdf_s, _bracket, QUANTS, QCOLS)
 
 YEARS = range(1951, 2007)
 GUV_ONLY_YEARS = range(2007, 2014)   # guv targets but NO EPUF microdata: pure-GMM cells
@@ -710,22 +710,3 @@ def main(jobs=None, lam=LAM_DEFAULT, gmm_iters=GMM_ITERS_DEFAULT, out=None,
     print("(guv cells anchored at their frozen W; 2007-13 = pure GMM, W-2-denominated, "
           "ages 25-55 only; NO aggregate-mean constraint -- uncapped aggregates are "
           "unpinned by design)")
-
-
-if __name__ == "__main__":
-    kw = {}
-    if "--jobs" in sys.argv:
-        kw["jobs"] = int(sys.argv[sys.argv.index("--jobs") + 1])
-    if "--lam" in sys.argv:
-        kw["lam"] = float(sys.argv[sys.argv.index("--lam") + 1])
-    if "--gmm-iters" in sys.argv:
-        kw["gmm_iters"] = int(sys.argv[sys.argv.index("--gmm-iters") + 1])
-    if "--out" in sys.argv:
-        kw["out"] = Path(sys.argv[sys.argv.index("--out") + 1])
-    if "--no-smooth" in sys.argv:
-        kw["smooth"] = False
-    if "--rho" in sys.argv:
-        kw["rho"] = float(sys.argv[sys.argv.index("--rho") + 1])
-    if "--smooth-frac" in sys.argv:
-        kw["smooth_frac"] = float(sys.argv[sys.argv.index("--smooth-frac") + 1])
-    main(**kw)

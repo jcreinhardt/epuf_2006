@@ -15,7 +15,7 @@ repo convention.
 Each fitter's objective is the censored negll plus, when supplied, coupling terms:
   - mean_pen=(eta, w)      -- eta*w*E[X](theta): the aggregate-uncapped-mean pull
     (mean-constrained-mle skill). Separable across cells given one scalar eta/year.
-    Used by the joint smoothed-constrained solve (estimate_cross_sections.py).
+    Used by the joint smoothed-constrained solve (crosssec_mle.py).
   - smooth_pen=(wvec, gt)  -- Sum_j wvec_j (g_j(theta) - gt_j)^2: a weighted quadratic
     pull of the fitted distribution's FUNCTIONALS g (not raw params) toward a
     neighbour-implied target (smoothed-constrained-mle skill, Gauss-Seidel reduction
@@ -27,7 +27,7 @@ Each fitter's objective is the censored negll plus, when supplied, coupling term
     the PER-OBSERVATION composite units (divide summed-likelihood-units weights by n).
   - gmm_pen=(lam, qfun)    -- CONVEX COMBINATION, not an additive penalty: the objective
     becomes (1-lam)*negll/n + lam*qfun(theta), with qfun a scalar GMM criterion on the
-    internal theta (estimate_cross_sections_gmm.py builds it from the Guvenen sel0
+    internal theta (crosssec_gmm.py builds it from the Guvenen sel0
     cohort x age targets). negll is divided by n so lam weighs a PER-OBSERVATION
     log-likelihood against the moment criterion and means the same thing in every cell.
     For the dPlN it also floors alpha at ALPHA_MIN (like mean_pen): a fit headed for

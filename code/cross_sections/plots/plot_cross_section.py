@@ -17,7 +17,7 @@ a standalone unconstrained MLE for the cell instead, which is the original behav
 script and is useful for seeing what the smoothing and the mean constraint changed;
 `--refit --overlay` draws both.
 
-  python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]
+  python code/cross_sections/plots/plot_cross_section.py [age] [cohort] [sex]
     age defaults to 40, cohort to 1950, sex to 2 (female); sex accepts 1/2 or male/female.
     (age 40, cohort 1950 -> year 1990.)  --year Y sets the year directly (cohort = Y - age).
     -> output/cross_sections/plots/<women_mixture|men_dpln>_c<cohort>_a<age>.pdf (+ .png)
@@ -89,7 +89,7 @@ def pipeline_row(year, sex, age, params=PARAMS):
     year is outside the estimation span, and quietly substituting a different estimator
     would make the figure disagree with everything else in the project."""
     if not params.exists():
-        sys.exit(f"{params} not found -- run estimate_cross_sections.py, or pass --refit")
+        sys.exit(f"{params} not found -- run estimate_cross_sections.py --mode mle, or pass --refit")
     d = pd.read_csv(params)
     hit = d[(d["year"] == year) & (d["sex"] == sex) & (d["age"] == age)]
     if hit.empty:

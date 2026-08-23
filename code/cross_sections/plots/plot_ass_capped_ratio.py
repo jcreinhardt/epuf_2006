@@ -6,7 +6,7 @@ share of average earnings the taxable maximum hides. It is the motivation figure
 using external (GKSW) moments: whatever this ratio exceeds 1 by is invisible to any
 estimator that only sees top-coded EPUF earnings.
 
-  python code/cross_sections/plot_ass_capped_ratio.py
+  python code/cross_sections/plots/plot_ass_capped_ratio.py
     -> output/cross_sections/plots/ass_uncapped_capped_ratio.pdf (+ .png)
 """
 from pathlib import Path

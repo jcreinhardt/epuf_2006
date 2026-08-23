@@ -4,7 +4,7 @@ cross-sections over a target year range (default 1937-2100), by ANCHORING at the
 recent data edge and driving only the location parameters with an external nominal
 wage-growth series.
 
-The joint smoothed-constrained fits (estimate_cross_sections.py) cover the years the data see (1951-2006),
+The joint smoothed-constrained fits (estimate_cross_sections.py --mode mle) cover the years the data see (1951-2006),
 and THOSE are the interpolation -- kept verbatim. To reach the cohorts a 1937-2100
 panel needs (1860-2085 over ages 15-77) we extrapolate the missing years. The old
 approach fit a global polynomial per parameter and let a free linear-in-year slope

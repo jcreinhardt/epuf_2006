@@ -32,7 +32,7 @@ Bottom side needs no rule: the screen (>= $260 in 1957) sits above EPUF's $200
 bottom-code throughout 1957-2006, so low quantiles of the screened sample are always
 observed. GKSW's p99.999 winsorization cannot touch p98 either.
 
-  python code/cross_sections/plot_guv_quantile_validation.py
+  python code/cross_sections/plots/plot_guv_quantile_validation.py
     -> output/cross_sections/plots/guv_quantile_validation_{men,women}.pdf (+ .png)
        output/cross_sections/guv_quantile_validation_cohort_means.csv
 """
@@ -41,7 +41,7 @@ import sys
 from io import StringIO
 from pathlib import Path
 
-sys.path.insert(0, "code/cross_sections")   # run from project root, per repo convention
+sys.path[:0] = ["code/cross_sections", "code/cross_sections/plots"]   # run from project root
 import numpy as np
 import pandas as pd
 import matplotlib

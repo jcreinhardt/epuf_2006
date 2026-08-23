@@ -118,14 +118,35 @@ epuf_2006/
 │   ├── ssa_replication/
 │   │   ├── example_panel_to_age60.sql     # sample analysis query (see below)
 │   │   ├── replicate_note_table2.sql      # replicate Table 2 of RS Note 2012-01
-│   │   └── plot_chart4_replication.py     # replicate Chart 4 → output/ssa_replication/chart4_replication.pdf
-│   └── cross_sections/
-│       ├── crosssec_fit.py                # shared (year, sex[, age]) fitters: dPlN (men) + lognormal mixture (women)
-│       ├── estimate_cross_sections.py     # stage 1: joint smoothed-constrained MLE → cross_section_params{,_smoothed}.csv
-│       ├── extrapolate_params.py          # stage 2: extrapolate off the data edges → cross_section_params_extrapolated.csv
-│       ├── plot_cross_section.py          # raw histogram + fitted density, one (age, cohort, sex) cell → output/cross_sections/plots/
-│       ├── plot_param.py                  # cohort×age heatmaps of every fitted/smoothed parameter
-│       └── plot_agg_tax_total.py          # aggregate earnings, capped + uncapped: extrapolated model vs EPUF vs ASS+TR
+│   │   └── plots/
+│   │       └── plot_chart4_replication.py # replicate Chart 4 → output/ssa_replication/chart4_replication.pdf
+│   ├── cross_sections/
+│   │   ├── estimate_cross_sections.py     # UNIFIED ENTRY POINT: --mode mle | mle-gmm | both
+│   │   ├── crosssec_fit.py                # shared (year, sex[, age]) fitters: dPlN (men) + lognormal mixture (women)
+│   │   ├── crosssec_mle.py                # --mode mle:     joint smoothed, aggregate-constrained censored MLE
+│   │   ├── crosssec_gmm.py                # --mode mle-gmm: convex combination of that likelihood with a GMM
+│   │   │                                  #                 criterion on the published GKSW targets
+│   │   ├── guv_targets.py                 # GKSW target loading + stable log-space Normal-Laplace pdf/cdf
+│   │   ├── extrapolate_params.py          # stage 2: extrapolate off the data edges → cross_section_params_extrapolated.csv
+│   │   └── plots/
+│   │       ├── plot_cross_section.py      # raw histogram + fitted density, one (age, cohort, sex) cell
+│   │       ├── plot_param.py              # cohort×age heatmaps of every fitted/smoothed parameter
+│   │       ├── plot_agg_tax_total.py      # aggregate earnings, capped + uncapped: model vs EPUF vs ASS+TR
+│   │       ├── plot_guv_comparison.py     # fitted cells vs the published GKSW functionals
+│   │       ├── plot_guv_quantile_validation.py
+│   │       ├── plot_nu_tau.py             # slide-sized ν/τ panels
+│   │       └── plot_ass_capped_ratio.py
+│   └── dynamics/
+│       ├── estimate_g_cohort.py           # UNIFIED ENTRY POINT: --mode ols | smm-mean | smm-quantiles
+│       ├── gcohort_model.py               # GKOS process, simulation, suffix tables, the moment map
+│       ├── gcohort_ols.py                 # --mode ols: CMS's per-block OLS (reproduces their coefficients)
+│       ├── gcohort_smm.py                 # --mode smm-*: SMM with multi-step optimal weighting
+│       ├── extrapolate_g_cohort.py        # extrapolate g(t) off the observed cohort range
+│       ├── simulate_cms_selection.py      # standalone selection-bias experiment
+│       ├── simulate_gkos_ordinal.py       # standalone ordinal-transform experiment
+│       └── plots/
+│           ├── plot_agg_tax_dynamics.py   # aggregate taxable earnings from the g(t) path vs ASS
+│           └── compare_g_cms.py           # fitted g vs CMS's published lifecycle profiles
 ├── processed_data/
 │   └── ssa.duckdb                     # shared DB: demographic + annual + supplement_4b1 (~1.6 GB)
 └── output/                            # generated artifacts (regenerable; not version-controlled)
@@ -275,19 +296,42 @@ aggregate mean to the published ASS benchmark, then an extrapolation off the two
 smoothing after constraining breaks the constraint and constraining after smoothing breaks the
 smoothness — see `CLAUDE.md` for the details of the joint solve.)
 
+All estimation goes through **one entry point**, `estimate_cross_sections.py`, whose `--mode`
+selects the data term. `--mode mle` is the canonical pipeline; `--mode mle-gmm` combines the same
+censored likelihood with a GMM criterion on the published GKSW targets (see `CLAUDE.md`).
+
 ```bash
-# stage 1 — joint smoothed-constrained MLE over every (year, sex, age) cell, ≥1000 obs
+# stage 1, mode mle — joint smoothed-constrained MLE over every (year, sex, age) cell, ≥1000 obs
 #           → cross_section_params_smoothed.csv, plus the raw stage-0 fits in cross_section_params.csv
-python code/cross_sections/estimate_cross_sections.py [--jobs N] [--rho R] [--rho-steps S]
+python code/cross_sections/estimate_cross_sections.py --mode mle [--jobs N] [--rho R] [--rho-steps S]
+# stage 1, mode mle-gmm — convex combination with the GKSW targets, weight lam
+#           → cross_section_params_guvgmm_smoothed.csv
+python code/cross_sections/estimate_cross_sections.py --mode mle-gmm [--lam L] [--gmm-iters K]
 # stage 2 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
 python code/cross_sections/extrapolate_params.py
 
-python code/cross_sections/plot_cross_section.py [age] [cohort] [sex]  # raw histogram + fitted density; defaults to age 40, cohort 1950, women (year = cohort + age)
-python code/cross_sections/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
-python code/cross_sections/plot_agg_tax_total.py                       # end-to-end: capped and uncapped aggregates vs ASS + Trustees Report
+python code/cross_sections/plots/plot_cross_section.py [age] [cohort] [sex]  # raw histogram + fitted density; defaults to age 40, cohort 1950, women (year = cohort + age)
+python code/cross_sections/plots/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
+python code/cross_sections/plots/plot_agg_tax_total.py                       # end-to-end: capped and uncapped aggregates vs ASS + Trustees Report
 ```
 
-**Stage 1** (`estimate_cross_sections.py`) fits ~6.4k `(year, sex, age)` cells (single-year ages
+### Lifecycle profile g(t) by cohort × sex
+
+Also one entry point, `estimate_g_cohort.py`, with three estimators of the same object:
+
+```bash
+python code/dynamics/estimate_g_cohort.py --mode ols             # CMS's per-block OLS on the published moment
+python code/dynamics/estimate_g_cohort.py --mode smm-mean        # SMM on meanlog alone (model inversion)
+python code/dynamics/estimate_g_cohort.py --mode smm-quantiles   # SMM on meanlog + p10…p98, optimal weighting
+python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_mean.csv
+```
+
+`--mode ols` reproduces CMS's published `lifecycle_income_*.dta` coefficients to ~3e-7 on `sel3`.
+Its `g` is on a different **level** from the SMM modes — it absorbs the `E[u | u ≥ log(Ymin) − g]`
+term the SMM modes strip out — so it reports `eu_offset` per block, with
+`g0(ols) = g0(smm-mean) + eu_offset` exact. Slopes need no such correction.
+
+**Stage 1** (`--mode mle`, implemented in `crosssec_mle.py`) fits ~6.4k `(year, sex, age)` cells (single-year ages
 with ≥1000 positive-earnings observations; smaller cells skipped) in ~3 minutes: it pulls the data
 once per year and fits years in parallel (BLAS pinned to one thread per worker). Each cell uses
 **multi-start keep-best** — a warm start from the previous age and a robust cold start (the dPlN's
