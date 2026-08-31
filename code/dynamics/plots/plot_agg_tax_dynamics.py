@@ -372,6 +372,17 @@ def main():
     ap.add_argument("--n", type=int, default=200_000)
     ap.add_argument("--seed", type=int, default=20260821)
     ap.add_argument("--outdir", default=OUT)
+    ap.add_argument("--export", default=None,
+                    help="also write the model aggregate to this CSV, for other figures "
+                         "to overlay (see plots/plot_agg_tax_total.py --gkos)")
+    ap.add_argument("--renorm-comp", action="store_true",
+                    help="renormalise the (sex, age) composition WITHIN the modelled ages "
+                         "so the model's worker total equals the published covered-worker "
+                         "total. Off (default) the model covers ages LO-HI only and falls "
+                         "short of the published total by whatever the other ages carry, "
+                         "which is what this script's own figure reports. Turn it ON when "
+                         "exporting for a figure whose other series are per-covered-worker "
+                         "over ALL ages -- otherwise the coverage gap reads as model error.")
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
     lo, hi = args.ages
@@ -393,6 +404,11 @@ def main():
     cells = epuf_cells()
     comp = composition(cells, years)
     cov_per, cov_prof = coverage(cells, lo, hi)
+    if args.renorm_comp:
+        for y in years:
+            inw = {k: v for k, v in comp[y].items() if lo <= k[1] <= hi}
+            tot = sum(inw.values())
+            comp[y] = {k: v / tot for k, v in inw.items()} if tot > 0 else inw
     tables = exp_tables(E.simulate_u(np.random.default_rng(args.seed), args.n, ages))
 
     agg, unc, cens = model_aggregate(
@@ -444,6 +460,23 @@ def main():
     for lab, y0, y1 in (("pre-EPUF 1937-1950", 1937, 1950), ("in sample 1951-2006", 1951, 2006),
                         ("2007-2022 (ASS)", 2007, 2022)):
         print(f"  {lab:22s} model {band(ru, y0, y1)}")
+    if args.export:
+        os.makedirs(os.path.dirname(os.path.abspath(args.export)), exist_ok=True)
+        with open(args.export, "w") as fh:
+            # price_2013_to_nominal travels with the series because it is what turned the
+            # model's 2013-dollar g into nominal earnings; any other real-2013$ series a
+            # consumer wants on the same nominal axis needs exactly this factor.
+            fh.write("year,agg_taxable_musd,agg_uncapped_musd,"
+                     "cov_share_workers,cov_share_earnings,"
+                     "price_2013_to_nominal,renorm_comp\n")
+            for y in years:
+                fh.write(f"{y},{agg[y]:.6f},{unc[y]:.6f},"
+                         f"{cov_per['n'].get(y, float('nan')):.6f},"
+                         f"{cov_per['earn'].get(y, float('nan')):.6f},"
+                         f"{P[y]:.8f},{int(args.renorm_comp)}\n")
+        print(f"wrote {args.export}  ({len(years)} years, "
+              f"renorm_comp={args.renorm_comp})")
+
     print(f"\nwrote {args.outdir}/aggregate_taxable_dynamics_{args.tag}.pdf/.png "
           f"and age_coverage_{args.tag}.pdf/.png")
 

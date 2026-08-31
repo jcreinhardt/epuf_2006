@@ -66,6 +66,9 @@ python code/cross_sections/estimate_cross_sections.py --mode mle-gmm [--lam L] [
 python code/cross_sections/extrapolate_params.py
 
 python code/cross_sections/plots/plot_agg_tax_total.py   # END-TO-END validation: model vs ASS+TR, capped AND uncapped
+#   two optional overlays on that figure:
+#     --gkos CSV   the GKOS/Guvenen cohort-model aggregate (see the dynamics block below)
+#     --e9f  PATH  the prior pipeline's agg_taxable_earnings_extrap.parquet (real 2013$)
 python code/cross_sections/plots/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
 python code/cross_sections/plots/plot_cross_section.py [age] [cohort] [sex] [--year Y] [--refit] [--overlay]   # one cell: histogram + fitted density
 ```
@@ -82,7 +85,36 @@ python code/dynamics/estimate_g_cohort.py --mode smm-quantiles   # gcohort_smm.p
 python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_mean.csv
 python code/dynamics/plots/compare_g_cms.py [--sel sel0]
 python code/dynamics/plots/plot_agg_tax_dynamics.py [--fits CSV] [--ages 20 70]
+#   --export CSV writes the model aggregate for other figures to overlay;
+#   --renorm-comp is REQUIRED when exporting for plot_agg_tax_total.py (see below)
 ```
+
+**Putting the GKOS aggregate on the cross-section figure.** The two models reach aggregate
+taxable earnings by routes that share no parameters — the per-cell dPlN/mixture surface vs the
+GKOS lifecycle process with only g(t) free — so overlaying them is a real check. Three steps:
+
+```bash
+python code/dynamics/estimate_g_cohort.py --mode smm-quantiles --degree 2 --jobs 8 --tag _quad
+python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_quantiles_quad.csv
+python code/dynamics/plots/plot_agg_tax_dynamics.py \
+    --fits output/dynamics/g_cohort_smm_quantiles_quad.csv --tag smmq_quad_2070 \
+    --renorm-comp --export output/dynamics/agg_taxable_gkos_smmq_quad.csv
+python code/cross_sections/plots/plot_agg_tax_total.py \
+    --gkos output/dynamics/agg_taxable_gkos_smmq_quad.csv
+```
+
+**`--renorm-comp` is not optional here, and the loader enforces it.** The dynamics model covers
+ages 20–70 only; its own figure compares to the undivided published total and reports the
+resulting coverage shortfall explicitly. The cross-section figure's other series are
+per-covered-worker over ALL ages, so dropping the un-renormalised series onto it would show a
+~4% age-coverage gap as if it were model error. With the composition renormalised inside the
+window, both are "mean taxable earnings per covered worker × the published worker total" — at
+the cost of assuming workers outside 20–70 earn like the 20–70 average.
+
+Measured with the quadratic g(t) from SMM on mean + p10…p98: GKOS/benchmark is
+**0.992 [0.950–1.042]** in sample (1951–2006), 1.048 pre-EPUF, 1.032 over 2007–22, 1.047 on the
+TR projection. The parametric surface sits at 0.987 in sample, so the two agree to well under a
+percentage point despite sharing no parameters.
 
 `gcohort_model.py` holds the shared GKOS process, simulation, suffix tables and moment map.
 
@@ -269,6 +301,19 @@ belongs in the location (ν) rather than the tail.
   try to re-download it.
 
 ## Gotchas that will bite you
+
+- **The e9f series is CPI-deflated; this project's price index is PCE.** `agg_taxable_earnings_extrap.parquet`
+  (the prior cross-section pipeline, `project_vu`) is in real 2013 dollars, and reflating it with
+  our `price_index()` overstates it by up to **25%** mid-century (1960: 0.1297 vs 0.1623). The two
+  indices agree exactly at 2013 and diverge going back, so the error is invisible at the recent end
+  and worst where the series is hardest to eyeball — it put e9f at 1.12× the published benchmark in
+  sample, i.e. implausibly above a series it is built from. `load_e9f` recovers e9f's OWN deflator
+  from the file instead, as `nominal taxmax(y) / tax_max_2013(y)`, which needs no assumption about
+  which index they used. Corrected, e9f/benchmark is 0.972 [0.882–1.049] in sample, alongside EPUF
+  (0.948) and the parametric surface (0.987). 1950 is the check year: the taxable maximum was flat
+  at $3,000 through 1950, and the recovered conversion lands on 1.000 there.
+  **Any other real-dollar series from an outside pipeline deserves the same treatment** — find a
+  quantity whose nominal value you know, recover their deflator from it, and do not assume ours.
 
 - **`annual` is a sparse panel: an absent `(id, year)` means zero covered earnings that
   year, not missing data.** Balanced-panel work must zero-fill (see `example_panel_to_age60.sql`).
