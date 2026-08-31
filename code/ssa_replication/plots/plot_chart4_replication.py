@@ -18,7 +18,7 @@ Reads the shared ssa.duckdb via the duckdb CLI (no python duckdb module needed)
 and writes output/ssa_replication/chart4_replication.pdf.
 
 Run from the epuf_2006/ project root:
-    python code/ssa_replication/plot_chart4_replication.py
+    python code/ssa_replication/plots/plot_chart4_replication.py
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DB = ROOT / "processed_data" / "ssa.duckdb"
 OUT = ROOT / "output" / "ssa_replication" / "chart4_replication.pdf"
 

@@ -11,14 +11,14 @@ COLOR LIMITS ARE SHARED across the two figures, per parameter, computed over the
 both CSVs. With per-figure limits the smoothed panel gets its own (narrower) scale and the
 comparison shows nothing but the rescaling.
 
-  python code/cross_sections/plot_nu_tau.py
+  python code/cross_sections/plots/plot_nu_tau.py
     -> output/cross_sections/plots/nu_tau_men.pdf (+ .png)          raw stage-0 fits
        output/cross_sections/plots/nu_tau_men_smoothed.pdf (+ .png) after the joint solve
 """
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "code/cross_sections")   # run from project root, per repo convention
+sys.path[:0] = ["code/cross_sections", "code/cross_sections/plots"]   # run from project root
 import numpy as np
 import pandas as pd
 import matplotlib

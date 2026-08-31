@@ -47,7 +47,7 @@ row: it is top-coded, so it has no uncapped mean to plot.
 A dashed diagnostic overlays the OLD fixed-2000-04-composition aggregate, so the in-sample
 gain from using observed composition is visible directly.
 
-  python code/cross_sections/plot_agg_tax_total.py [params_csv] [tag]
+  python code/cross_sections/plots/plot_agg_tax_total.py [params_csv] [tag]
     -> output/cross_sections/plots/aggregate_taxable_extrapolated[_tag].pdf (+ .png)
        output/cross_sections/plots/aggregate_taxable_capped[_tag].pdf (+ .png)
 

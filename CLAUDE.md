@@ -39,30 +39,81 @@ Run SSA-figure replication:
 ```bash
 duckdb processed_data/ssa.duckdb < code/ssa_replication/replicate_note_table2.sql       # Table 2 of RS Note 2012-01
 duckdb processed_data/ssa.duckdb ".read code/ssa_replication/example_panel_to_age60.sql"
-python code/ssa_replication/plot_chart4_replication.py                                  # → output/ssa_replication/chart4_replication.pdf
+python code/ssa_replication/plots/plot_chart4_replication.py                            # → output/ssa_replication/chart4_replication.pdf
 ```
 
 Run cross-sectional distribution fits (per year × sex × single-year-age earnings
 distributions). **Two stages**: one joint optimization, then extrapolation off the observed
 span. Run in order — the second reads the first's CSV:
 
+**One entry point**, `estimate_cross_sections.py`, dispatches on `--mode`:
+
+- `--mode mle` — smoothed, aggregate-constrained censored MLE on EPUF alone. Implementation
+  `crosssec_mle.py`. Canonical; feeds `extrapolate_params.py` and the aggregate validation.
+- `--mode mle-gmm` — convex combination `(1−λ)·negll/n + λ·r'Wr` of that likelihood with an
+  iterated GMM criterion on the published GKSW (guv) sel0 targets. Implementation
+  `crosssec_gmm.py`. **Deliberately drops the aggregate-mean constraint** — read that module's
+  docstring before feeding its surface to EPUF-denominated aggregate validation.
+- `--mode both` — run both.
+
 ```bash
 # stage 1 — joint smoothed-constrained MLE → cross_section_params_smoothed.csv
 #           (also writes the raw stage-0 fits to cross_section_params.csv, + both heatmap sets)
-python code/cross_sections/estimate_cross_sections.py [--jobs N] [--rho R] [--rho-steps S]
+python code/cross_sections/estimate_cross_sections.py --mode mle [--jobs N] [--rho R] [--rho-steps S]
+# stage 1 alt — MLE+GMM against the GKSW targets → cross_section_params_guvgmm_smoothed.csv
+python code/cross_sections/estimate_cross_sections.py --mode mle-gmm [--lam L] [--gmm-iters K] [--no-smooth]
 # stage 2 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
 python code/cross_sections/extrapolate_params.py
 
-python code/cross_sections/plot_agg_tax_total.py   # END-TO-END validation: model vs ASS+TR, capped AND uncapped
-python code/cross_sections/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
-python code/cross_sections/plot_cross_section.py [age] [cohort] [sex] [--year Y] [--refit] [--overlay]   # one cell: histogram + fitted density
+python code/cross_sections/plots/plot_agg_tax_total.py   # END-TO-END validation: model vs ASS+TR, capped AND uncapped
+python code/cross_sections/plots/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
+python code/cross_sections/plots/plot_cross_section.py [age] [cohort] [sex] [--year Y] [--refit] [--overlay]   # one cell: histogram + fitted density
 ```
+
+### Lifecycle profile g(t) — `code/dynamics/`
+
+**One entry point**, `estimate_g_cohort.py`, three estimators of the same cohort × sex cubic
+`g(t) = g0 + g1·t + g2·t² + g3·t³`, `t = (age−24)/10`, against the published GKSW cohort × age files:
+
+```bash
+python code/dynamics/estimate_g_cohort.py --mode ols             # gcohort_ols.py — CMS's per-block OLS
+python code/dynamics/estimate_g_cohort.py --mode smm-mean        # gcohort_smm.py — SMM on meanlog alone
+python code/dynamics/estimate_g_cohort.py --mode smm-quantiles   # gcohort_smm.py — meanlog + p10…p98
+python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_mean.csv
+python code/dynamics/plots/compare_g_cms.py [--sel sel0]
+python code/dynamics/plots/plot_agg_tax_dynamics.py [--fits CSV] [--ages 20 70]
+```
+
+`gcohort_model.py` holds the shared GKOS process, simulation, suffix tables and moment map.
+
+**Three things about these modes that are easy to get wrong:**
+
+- **`--mode ols` is on a different LEVEL.** It regresses the observed moment directly, so its `g`
+  absorbs the `E[u | u ≥ log(Ymin) − g]` term the SMM modes strip out (~0.38 log points). It
+  reports `eu_offset` per block, and `g0(ols) = g0(smm-mean) + eu_offset` holds exactly. The
+  offset is a **fixed point** — `E[u|·]` must be read at the *inverted* g, and projected onto the
+  cubic basis and reduced to its constant term. Evaluating it one-shot at the OLS g, or as a plain
+  mean over ages, is off by 0.08–0.18 log points and by different amounts for men and women.
+  Slopes need no correction and are the useful comparison.
+- **The shape moments cannot identify g, and that is measured, not assumed.** `dm/dg` is ~1.000
+  for meanlog and every log percentile, and ~0.00–0.02 for sdlog/skewlog/kurtlog, because at the
+  GKOS parameters the Ymin truncation is nearly non-binding among positive earners (max censored
+  share ~0.001 — the nonemployment shock puts the low mass at exactly zero, not just above Ymin).
+  So there is no `--mode` for them. `gcohort_smm.py` still exposes `--moments {all,quantiles}` for
+  the **specification test** they do support, which rejects the fixed GKOS calibration in 100% of
+  blocks (men c=1970: J = 143,919 on df 306).
+- **Weight-matrix noise dominates the reported standard errors.** Across bootstrap redraws of Ŝ
+  the sd of `ĝ0` is 6–9× the asymptotic SE. The `se_*` columns understate real uncertainty by
+  that factor; `wsd_*` records the measured noise; `--wnoise K` re-measures it on any run.
+  Raising `--reps` above 1000 is the lever, at linear cost.
+
+`--mode ols` needs `replication_repos/CMS` for the SSA average-wage series; the SMM modes do not.
 
 The per-figure scripts read the CSVs, so they are seconds, not minutes. `plot_cross_section.py`
 defaults to the pipeline parameters; `--refit` fits the cell standalone and `--overlay` draws
 both, which is how to see what smoothing changed in one cell.
 
-**Stage 1** (`estimate_cross_sections.py`) implements the `smoothed-constrained-mle` skill:
+**Stage 1** (`--mode mle`, implemented in `crosssec_mle.py`) implements the `smoothed-constrained-mle` skill:
 per `(year, sex, single-year age)` cell (~6.4k cells, ≥1000 obs each), fit the censored
 distribution while **simultaneously** (a) borrowing strength across neighbouring ages and
 (b) pinning each year's uncapped aggregate mean to the published ASS benchmark. The two must
@@ -182,14 +233,29 @@ belongs in the location (ν) rather than the tail.
 
 ## Architecture
 
-- **Code and outputs are organized into three parallel sections**, each a subfolder of
+- **Code and outputs are organized into four parallel sections**, each a subfolder of
   both `code/` and `output/`: `data_import/` (build the shared DB from raw CSV + saved
-  HTML), `ssa_replication/` (replicate Compson 2012 RS Note figures/tables), and
+  HTML), `ssa_replication/` (replicate Compson 2012 RS Note figures/tables),
   `cross_sections/` (fit per-cell earnings distributions by year × sex × age — dPlN,
   lognormal mixture — in one joint solve that smooths along age and pins each year's uncapped
-  mean to the ASS benchmark, then extrapolate off the data edges).
+  mean to the ASS benchmark, then extrapolate off the data edges), and `dynamics/` (estimate
+  the GKOS lifecycle profile g(t) by cohort × sex, then extrapolate and validate it against
+  aggregate taxable earnings).
   Everything is still run **from the project root**, so in-code paths stay root-relative
   (`processed_data/ssa.duckdb`, `output/<section>/...`).
+- **Each section separates estimation from figures.** Estimators live in the section root and
+  never import a plotting module; every figure script lives in `code/<section>/plots/` and
+  mirrors `output/<section>/plots/`. This is load-bearing, not cosmetic: the MLE+GMM estimator
+  used to import its GKSW target loaders *from* `plot_guv_comparison.py`, which made an
+  estimation run depend on matplotlib. Those loaders are now `cross_sections/guv_targets.py`.
+  Where an estimator does produce figures as a side deliverable (`--mode mle` writes the
+  parameter heatmaps), it **lazy-imports** the plot module inside `main()` so the dependency
+  never exists at module import time.
+- **Each section has ONE estimation entry point** that dispatches on `--mode`:
+  `estimate_cross_sections.py` (`mle` | `mle-gmm` | `both`) and `estimate_g_cohort.py`
+  (`ols` | `smm-mean` | `smm-quantiles`). The modules behind them (`crosssec_mle.py`,
+  `crosssec_gmm.py`, `gcohort_model.py`, `gcohort_ols.py`, `gcohort_smm.py`) are libraries with
+  no CLI of their own — add a mode to the entry point rather than a new top-level script.
 - **Single shared DB `processed_data/ssa.duckdb`** is the integration point. Everything —
   EPUF microdata and Supplement aggregates — lives here so replication queries can `JOIN`
   microdata against the published series `USING (year)`. The two loaders each touch only
