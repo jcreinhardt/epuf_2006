@@ -152,7 +152,7 @@ def back_composition():
          f"FROM annual a JOIN demographic d USING(id) "
          f"WHERE a.earnings > 0 AND a.year BETWEEN {BACK[0]} AND {BACK[1]} "
          f"AND d.sex IN (1, 2) AND d.yob IS NOT NULL "
-         f"AND (a.year - d.yob) BETWEEN 15 AND 77 GROUP BY 1, 2) "
+         f"AND (a.year - d.yob) BETWEEN 15 AND 77 GROUP BY 1, 2 ORDER BY 1, 2) "
          f"TO '/dev/stdout' (FORMAT CSV, HEADER TRUE);")
     out = subprocess.run(["duckdb", cf.DB, "-c", q], capture_output=True, text=True, check=True).stdout
     d = pd.read_csv(io.StringIO(out)); tot = d["n"].sum()

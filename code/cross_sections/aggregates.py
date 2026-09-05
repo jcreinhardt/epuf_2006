@@ -85,8 +85,9 @@ def epuf_counts():
     q = ("COPY (SELECT a.year, d.sex, (a.year-d.yob) AS age, COUNT(*) AS n "
          "FROM annual a JOIN demographic d USING(id) "
          "WHERE a.earnings>0 AND d.sex IN (1,2) AND d.yob IS NOT NULL "
-         "AND (a.year-d.yob) BETWEEN 15 AND 77 GROUP BY 1,2,3) "
-         "TO '/dev/stdout' (FORMAT CSV, HEADER TRUE);")
+         "AND (a.year-d.yob) BETWEEN 15 AND 77 GROUP BY 1,2,3 ORDER BY 1,2,3) "
+         "TO '/dev/stdout' (FORMAT CSV, HEADER TRUE);")   # ORDER BY: fixes the (sex, age)
+         # iteration order, hence the summation order in agg_composed / agg_uncapped
     return pd.read_csv(io.StringIO(_duck(q)))
 
 

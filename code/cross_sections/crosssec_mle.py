@@ -103,9 +103,21 @@ COLS = ["year", "sex", "age", "model", "n", "n_low", "n_high", "negll", "converg
 
 # --------------------------------------------------------------------------- data / target
 def load_year(year):
+    """Every positive-earnings row of one year as (sex, age, earnings).
+
+    Rows are ORDERED explicitly. DuckDB's scan is parallel and returns rows in a
+    different order on every call, and the censored log-likelihood is a float sum over
+    them -- so an unordered scan makes the last bits of every objective evaluation
+    depend on the run. In a weakly-identified cell (the flat, heavily-censored ones this
+    whole pipeline exists to handle) that is enough to tip the optimizer into a different
+    basin, and three stage-0 runs of identical code on 1990 differed by up to 10x in
+    fitted alpha. Ordering by earnings pins the summation order, which is what makes the
+    fits reproducible and any two runs diffable.
+    """
     q = ("SELECT d.sex, a.year - d.yob AS age, a.earnings "
          "FROM annual a JOIN demographic d USING(id) "
-         f"WHERE a.year={int(year)} AND a.earnings>0 AND d.sex IN (1,2)")
+         f"WHERE a.year={int(year)} AND a.earnings>0 AND d.sex IN (1,2) "
+         "ORDER BY d.sex, age, a.earnings")
     out = subprocess.run(["duckdb", "-readonly", cf.DB, "-noheader", "-csv", "-c", q],
                          capture_output=True, text=True, check=True).stdout
     return pd.read_csv(StringIO(out), header=None, names=["sex", "age", "earnings"])

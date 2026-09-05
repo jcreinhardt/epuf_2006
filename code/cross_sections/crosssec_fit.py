@@ -72,10 +72,15 @@ WARM_OPTS = dict(maxiter=40,  ftol=1e-6, gtol=1e-3)
 # ----------------------------------------------------------------------------- data
 def load_earnings(year, sex, age=None):
     """Positive covered earnings for a (year, sex) slice; pass `age` (= year - yob)
-    to further restrict to a single-year age cell."""
+    to further restrict to a single-year age cell.
+
+    ORDER BY is load-bearing, not cosmetic -- see crosssec_mle.load_year: an unordered
+    parallel scan makes the likelihood's float summation order vary run to run, which
+    flips basins in weakly-identified cells."""
     age_clause = "" if age is None else f" AND a.year - d.yob={int(age)}"
     q = ("SELECT a.earnings FROM annual a JOIN demographic d USING(id) "
-         f"WHERE a.year={int(year)} AND d.sex={int(sex)} AND a.earnings>0{age_clause}")
+         f"WHERE a.year={int(year)} AND d.sex={int(sex)} AND a.earnings>0{age_clause} "
+         "ORDER BY a.earnings")
     out = subprocess.run(["duckdb", DB, "-noheader", "-csv", "-c", q],
                          capture_output=True, text=True, check=True).stdout
     return np.array(out.split(), dtype=float)
