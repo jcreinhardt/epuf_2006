@@ -93,6 +93,19 @@ _MW_GKSW = [0.40, 0.40, 0.40, 0.40, 0.75, 0.75, 0.75, 0.75, 0.75, 1.00,   # 1947
 def min_wage(year):
     return _MW_GKSW[year - 1947]
 
+
+SEL0_HOURS, SEL0_FRAC = 520.0, 0.5
+
+
+def sel0_threshold(year):
+    """GKSW's per-year sample screen in NOMINAL dollars: keep earnings >= 0.5 x 520 h x
+    minimum wage (cohortage_partiallifecycle_25mar2016_1pc.do, `keep if rwageinc >=
+    0.5*rminwg*520`). The do-file states it in real terms, but rwageinc and rminwg carry
+    the SAME year's deflator, so this nominal form is exact. It is the ONE definition every
+    script that reproduces the screen must use -- the EPUF-side quantile validation, the
+    model-side conditioning in plot_guv_comparison, the GMM targets in crosssec_gmm."""
+    return SEL0_FRAC * SEL0_HOURS * min_wage(year)
+
 # GKSW's own PCE deflator matrix (merge_reshape_06jan2016_1pc.do, 1947-2014, their
 # vintage kept verbatim; the run that produced the guv files deflates with THIS, base
 # 2013, per the package ReadMe).
@@ -134,6 +147,29 @@ def load_guv():
 def load_deflator():
     base = _PCE_GKSW[BASE_YEAR - 1947]
     return {1947 + i: base / p for i, p in enumerate(_PCE_GKSW)}   # nominal x factor -> real 2013 $
+
+
+def check_guv_conventions():
+    """Assert the hard-coded GKSW matrices still say what every loader assumes. Cheap, and
+    the two mistakes it guards against are silent: a year-alignment slip in the PCE matrix
+    would rescale every real-dollar comparison by a constant, and a screen coded in real
+    dollars on one side only would move the bottom quantiles. Checks: 1947-2013 minimum-wage
+    and 1947-2014 PCE matrices; the matrix is BEA's 2009 = 100 vintage, so its 2009 entry
+    is exactly 100 (year alignment) and its 2013 entry is 107.572 -- the value the do-file's
+    1-based base_price = 67 picks, so `deflate = cpi[67]/cpi[yr]` gives real 2013 dollars
+    and the factor is 1.0 in 2013 (NOT "the 2013 entry is 100": that is a different
+    matrix); and the do-file's real-dollar screen 0.5*rminwg*520 with rminwg = minwg x
+    deflator equals sel0_threshold x the same deflator in every year, i.e. the nominal
+    screen is the exact one."""
+    assert len(_MW_GKSW) == 2013 - 1947 + 1, "minimum-wage matrix must span 1947-2013"
+    assert len(_PCE_GKSW) == 2014 - 1947 + 1, "PCE matrix must span 1947-2014"
+    assert _PCE_GKSW[2009 - 1947] == 100.0, "PCE matrix misaligned: 2009 entry is not 100"
+    assert _PCE_GKSW[BASE_YEAR - 1947] == 107.572, "PCE matrix 2013 entry != do-file base"
+    defl = load_deflator()
+    assert abs(defl[BASE_YEAR] - 1.0) < 1e-12
+    for y in range(1957, 2014):
+        rminwg = min_wage(y) * defl[y]                       # do-file: real minimum wage
+        assert abs(SEL0_FRAC * rminwg * SEL0_HOURS - sel0_threshold(y) * defl[y]) < 1e-9
 
 
 def _check_stable_vs_original():

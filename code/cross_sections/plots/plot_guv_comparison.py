@@ -27,17 +27,27 @@ exact conventions:
   - earnings are winsorized at the 99.999th percentile within each year, before selection.
   - values are REAL 2013 dollars, PCE-deflated -- the package ReadMe assigns this run to
     the PCE merge_reshape, and the paper (Section I.B) picks PCE as baseline explicitly.
-    We use the package's own PCE matrix verbatim. NOTE an earlier empirical check here
-    matched CPI-U better; the reconciliation is a concept gap, not the deflator: GKSW use
-    total W-2 wage/salary income of "commerce and industry" workers (CWHS 1%), while EPUF
-    records covered earnings of all covered workers -- MEF wage quantiles sit ~7-10%
-    above EPUF's in the early decades (shrinking as coverage expands), which masquerades
-    as the CPI/PCE wedge. Under PCE the model's meanlog / dollar quantiles therefore sit
-    visibly BELOW the data in early years; that gap is the concept/coverage wedge and is
-    expected. sdlog/skewlog/kurtlog are unaffected by the deflator entirely.
+    We use the package's own PCE matrix verbatim (BEA's 2009 = 100 vintage; the
+    do-file's base_price = 67 picks the 2013 entry, 107.572, as the base -- asserted by
+    guv_targets.check_guv_conventions). NOTE an earlier empirical check here matched
+    CPI-U better; that was a coincidence of levels, not the deflator. The reconciliation
+    is a SAMPLE-COMPOSITION gap, measured data-vs-data in plot_guv_gap_signature.py:
+    GKSW use Kopczuk-Saez-Song's "commerce and industry" W-2 wages (no self-employment
+    income, no agriculture, households, hospitals, education, social services, public
+    administration), while EPUF `earnings` is ALL covered earnings incl. taxable
+    self-employment. The wedge is bottom-heavy (men's p10 15-20% below GKSW, p50 5-7%,
+    p75 ~4%; women's p50/p75 AT or above GKSW) and grows with age (men's p10 gap ~0 at
+    25-30, -25 to -33% at 50-55) -- a deflator error would be one scalar per year and
+    cannot do that. It does NOT shrink over time, and it closes at 2005 only because
+    GKSW's own source changes (KSS sample -> raw MEF; their p10 falls 8-17% in one year
+    onto EPUF's). Under PCE the model's meanlog / dollar quantiles therefore sit BELOW
+    the data, most at the bottom and at older ages; that is expected and not a model
+    defect. sdlog/skewlog/kurtlog are unaffected by the deflator entirely.
   - income concept: W-2 wage and salary only -- NO self-employment (GKSW footnote 10:
     Schedule SE exists from 1978 but is excluded; top-coded until 1994). Pre-1978
-    above-cap earnings are imputed from quarterly patterns (Kopczuk-Saez-Song).
+    above-cap earnings are imputed from quarterly patterns (Kopczuk-Saez-Song). The
+    sample is KSS's, 1957-2004, extended 2004-2013 from the underlying MEF (Section
+    I.A): a source break at 2005 and, at 1978, the quarterly-report -> W-2 switch.
 
 Model side: parameters from cross_section_params_extrapolated.csv (the canonical complete
 surface -- in-sample pass-through where kept, plus the 2007-2013 years the Guvenen window
@@ -97,6 +107,7 @@ from scipy.optimize import brentq
 from crosssec_fit import mix_logpdf, mix_cdf
 from guv_targets import (nl_logpdf_s, nl_cdf_s, GUV_DIR, BASE_YEAR,
                          QUANTS, QCOLS, MCOLS, FUNCTIONALS, min_wage,
+                         sel0_threshold, check_guv_conventions,
                          load_guv, load_deflator, _bracket,
                          _check_stable_vs_original)
 
@@ -166,6 +177,7 @@ def check_against_cumulants(row):
 # ---------------------------------------------------------------- main
 def main():
     _check_stable_vs_original()
+    check_guv_conventions()
     guv = load_guv()
     par = pd.read_csv(PARAMS)
     par = par.set_index(["year", "sex", "age"])
@@ -185,7 +197,7 @@ def main():
         prow = par.loc[key].copy()
         prow["sex"] = c["sex"]
         fac = defl[c["year"]]
-        f = cell_functionals(prow, x_min=260.0 * min_wage(c["year"]))   # the sel0 screen
+        f = cell_functionals(prow, x_min=sel0_threshold(c["year"]))   # the sel0 screen
         rec = {"year": c["year"], "sex": c["sex"], "age": c["age"],
                "meanlog": f["meanlog"] + np.log(fac),
                "sdlog": f["sdlog"], "skewlog": f["skewlog"], "kurtlog": f["kurtlog"]}

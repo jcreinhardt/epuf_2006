@@ -278,6 +278,23 @@ so the lower birth-year bound rises and fewer cohorts qualify).
   amounts are approximate.
 - **Sparse panel.** Absence of a person-year = zero covered earnings, not missing data.
   Disclosure rules also zero out ages ≤ 14 and ≥ 86.
+- **EPUF quantiles sit below the GKSW (Guvenen–Kaplan–Song–Weidner 2022) cohort × age
+  files, and that is sample composition, not a bug.** Both are 1% samples of SSNs, so the
+  *frames* are statistically equivalent (sampling error at a cell quantile is < 1%). The
+  *sample selection* is not: the GKSW files are Kopczuk–Saez–Song's "commerce and industry"
+  W-2 wages — no self-employment income, no agriculture, private households, hospitals,
+  education, social services or public administration — while `earnings` here is all
+  covered earnings including taxable self-employment (the Supplement's Table 4.B2 puts the
+  self-employed at 7–11% of covered workers, with mean taxable earnings 45–80% of the wage
+  mean). EPUF carries no industry or self-employment flag, so that selection cannot be
+  reproduced. The wedge has the composition signature, not a deflation one: it is
+  bottom-heavy (men's p10 15–20% below GKSW, p50 5–7%, p75 ~4%; women's p50/p75 at or above
+  GKSW) and grows with age (men's p10 gap ~0 at 25–30, −25 to −33% at 50–55), whereas a
+  price-index error would be one scalar per year. It closes in 2005 only because GKSW's own
+  source switches from the KSS sample to the raw MEF (their p10 falls 8–17% in one year onto
+  EPUF's). `code/cross_sections/plots/plot_guv_gap_signature.py` is the measurement; the
+  screen and deflator are one shared definition in `guv_targets.py`, asserted at runtime by
+  `check_guv_conventions()`.
 - **`qtrs` is not "time worked".** It is an earnings-threshold credit count (max 4); since
   1978 it is a coarse function of annual earnings, not calendar quarters employed, and it
   saturates at 4 for most full-year workers.

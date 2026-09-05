@@ -32,6 +32,12 @@ Bottom side needs no rule: the screen (>= $260 in 1957) sits above EPUF's $200
 bottom-code throughout 1957-2006, so low quantiles of the screened sample are always
 observed. GKSW's p99.999 winsorization cannot touch p98 either.
 
+The screen and the deflator are the ONE shared definition in guv_targets
+(sel0_threshold, load_deflator) and check_guv_conventions() asserts them at startup.
+The level gap this figure shows is a sample-composition wedge, not a deflation or
+screen mismatch -- plot_guv_gap_signature.py is the per-quantile, per-age decomposition
+that establishes that.
+
   python code/cross_sections/plots/plot_guv_quantile_validation.py
     -> output/cross_sections/plots/guv_quantile_validation_{men,women}.pdf (+ .png)
        output/cross_sections/guv_quantile_validation_cohort_means.csv
@@ -49,7 +55,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import crosssec_fit as cf
-from plot_guv_comparison import load_guv, load_deflator, min_wage, QUANTS, QCOLS
+from guv_targets import (load_guv, load_deflator, sel0_threshold, check_guv_conventions,
+                         QUANTS, QCOLS)
 
 YEARS = (1957, 2006)      # EPUF in-sample years inside the guv window
 AGES  = (25, 55)
@@ -60,7 +67,7 @@ PLOT_DIR = Path("output/cross_sections/plots")
 def epuf_quantiles():
     """Empirical per-cell quantiles of screened EPUF earnings + the year's cap, via the
     duckdb CLI (repo convention). quantile_disc = lower order statistic, as in the do-file."""
-    mw_vals = ", ".join(f"({y}, {260.0 * min_wage(y)})"
+    mw_vals = ", ".join(f"({y}, {sel0_threshold(y)})"
                         for y in range(YEARS[0], YEARS[1] + 1))
     qcols = ", ".join(f"quantile_disc(a.earnings, {q}) AS {c}"
                       for q, c in zip(QUANTS, QCOLS))
@@ -79,6 +86,7 @@ def epuf_quantiles():
 
 
 def main():
+    check_guv_conventions()
     nages = AGES[1] - AGES[0] + 1
     guv_all = load_guv()                 # full 1957-2013 grid, for the GKSW line
     guv = guv_all[(guv_all["year"] >= YEARS[0]) & (guv_all["year"] <= YEARS[1])]

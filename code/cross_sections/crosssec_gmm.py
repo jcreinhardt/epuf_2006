@@ -136,7 +136,7 @@ import crosssec_fit as cf
 import crosssec_mle as ec
 from crosssec_mle import (load_year, basin_starts,
                                      freeze_omega_rho, viterbi, smooth_pen)
-from guv_targets import (load_guv, load_deflator, min_wage,
+from guv_targets import (load_guv, load_deflator, min_wage, sel0_threshold,
                          nl_logpdf_s, nl_cdf_s, _bracket, QUANTS, QCOLS)
 
 YEARS = range(1951, 2007)
@@ -191,7 +191,7 @@ def guv_targets():
         if y not in YEARS and y not in GUV_ONLY_YEARS:
             continue
         lfac = np.log(defl[y])                      # log(nominal -> real-2013 factor)
-        t = np.log(260.0 * min_wage(y))             # the sel0 screen, nominal logs
+        t = np.log(sel0_threshold(y))               # the sel0 screen, nominal logs
         m = np.array([r.meanlog - lfac, r.sdlog, r.skewlog, r.kurtlog])
         yq = np.array([np.log(getattr(r, c)) - lfac for c in QCOLS])
         tab[(y, int(r.sex), int(r.age))] = (t, m, yq)
@@ -694,7 +694,7 @@ def main(jobs=None, lam=LAM_DEFAULT, gmm_iters=GMM_ITERS_DEFAULT, out=None,
     warm = {(r["sex"], r["age"]): SEXES[r["sex"]][1](r) for r in rows
             if r["year"] == 2006}
     by06 = cells_by_age(load_year(2006))
-    thr06 = 260.0 * min_wage(2006)
+    thr06 = sel0_threshold(2006)
     nguv = {(s, a): int((x >= thr06).sum()) for s in by06 for a, x in by06[s].items()}
     ext = {y: {(s, a): v for (yy, s, a), v in targets.items() if yy == y}
            for y in GUV_ONLY_YEARS}

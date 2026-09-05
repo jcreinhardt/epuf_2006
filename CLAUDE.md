@@ -70,6 +70,8 @@ python code/cross_sections/plots/plot_agg_tax_total.py   # END-TO-END validation
 #     --gkos CSV   the GKOS/Guvenen cohort-model aggregate (see the dynamics block below)
 #     --e9f  PATH  the prior pipeline's agg_taxable_earnings_extrap.parquet (real 2013$)
 python code/cross_sections/plots/plot_param.py [men|women|both] [csv] [suffix]   # cohort×age parameter heatmaps
+python code/cross_sections/plots/plot_guv_quantile_validation.py   # DATA-vs-DATA: raw EPUF quantiles vs GKSW sel0, complete cohorts
+python code/cross_sections/plots/plot_guv_gap_signature.py         # DATA-vs-DATA: the EPUF/GKSW log gap by quantile × year and × age
 python code/cross_sections/plots/plot_cross_section.py [age] [cohort] [sex] [--year Y] [--refit] [--overlay]   # one cell: histogram + fitted density
 ```
 
@@ -333,6 +335,16 @@ belongs in the location (ν) rather than the tail.
 
 - **`annual` is a sparse panel: an absent `(id, year)` means zero covered earnings that
   year, not missing data.** Balanced-panel work must zero-fill (see `example_panel_to_age60.sql`).
+- **EPUF quantiles sit below the GKSW cohort × age files by design, not by error.** GKSW's
+  files are Kopczuk–Saez–Song "commerce and industry" W-2 wages (no self-employment, no
+  agriculture/households/hospitals/education/public admin); EPUF `earnings` is all covered
+  earnings incl. taxable self-employment, and has no flag to reproduce that selection. The
+  gap is bottom-heavy and age-increasing (men's p10 −15 to −20%, p75 −4%; women's p50/p75
+  ≈ 0), which no per-year deflator error can produce, and it closes in 2005 only because
+  GKSW's source switches to the raw MEF. The sel0 screen (`sel0_threshold`) and the PCE
+  deflator (BEA 2009 = 100 vintage, 2013 entry 107.572 as base) are ONE definition in
+  `guv_targets.py`, asserted by `check_guv_conventions()` — do not re-code either inline.
+  `plot_guv_gap_signature.py` is the measurement; `README.md` has the full caveat.
 - **`earnings` is top-coded** at each year's taxable maximum (plus bottom-coded and
   random-rounded). It understates true earnings, severely before ~1980. Restrict to
   `year >= 1980` for top-of-distribution analysis.
