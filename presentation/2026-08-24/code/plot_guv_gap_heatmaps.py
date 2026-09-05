@@ -77,12 +77,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# the GKSW targets and the stable Normal-Laplace pdf/cdf were split out of
-# plot_guv_comparison into cross_sections/guv_targets.py, so an estimator would not have
-# to import a plot module; cell_functionals (the MODEL side) stayed with the plot.
-from guv_targets import (BASE_YEAR, FUNCTIONALS, MCOLS, QCOLS,
+# The GKSW targets, the stable Normal-Laplace pdf/cdf, and the model-side functionals all
+# live in cross_sections/guv_targets.py, so nothing has to import a plot module for them.
+from guv_targets import (BASE_YEAR, FUNCTIONALS, QCOLS, cell_functionals,
                          _check_stable_vs_original, load_deflator, load_guv, min_wage)
-from plot_guv_comparison import cell_functionals
 
 PARAMS   = Path("output/cross_sections/cross_section_params_extrapolated.csv")
 OUT_DIR  = Path("output/cross_sections")            # the per-cell CSV: regenerable cache

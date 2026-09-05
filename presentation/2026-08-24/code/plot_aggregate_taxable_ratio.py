@@ -28,7 +28,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from plot_agg_tax_total import ass_taxable, epuf_direct, C_BENCH, C_EPUF, C_MODEL
+from benchmarks import ass_taxable
+from aggregates import epuf_direct
+from plot_agg_tax_total import C_BENCH, C_EPUF, C_MODEL   # figure palette only
 
 VU = ("/Users/jr2728/Dropbox/GZ SSec RA share 2023-present/project_vu - Copy (2)/"
       "data/intermediate/")

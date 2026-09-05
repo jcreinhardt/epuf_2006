@@ -295,10 +295,30 @@ belongs in the location (ν) rather than the tail.
   never import a plotting module; every figure script lives in `code/<section>/plots/` and
   mirrors `output/<section>/plots/`. This is load-bearing, not cosmetic: the MLE+GMM estimator
   used to import its GKSW target loaders *from* `plot_guv_comparison.py`, which made an
-  estimation run depend on matplotlib. Those loaders are now `cross_sections/guv_targets.py`.
+  estimation run depend on matplotlib. The rule keeps being violated by *accretion* — a plot
+  script grows a useful loader, and non-plotting code starts importing it — so the section
+  root now holds three libraries that exist to absorb exactly that, and figure scripts import
+  them rather than the reverse:
+  - `guv_targets.py` — the GKSW targets, the stable log-space Normal-Laplace pdf/cdf, and
+    `cell_functionals` (the model side of the same statistics).
+  - `benchmarks.py` — the published/projected ASS + TR series. **One definition per
+    quantity.** `ass_uncapped_per_worker()` in particular is the single moment the joint solve
+    is pinned to (`crosssec_mle` stage 3), the pre-1951 α calibration targets
+    (`extrapolate_params`), *and* the uncapped row of the validation figure. It used to be
+    computed three times from the same two workbook columns, reconciled only by a comment — if
+    those had drifted, the estimator would have been constrained to one number and validated
+    against another, with nothing in any output to reveal it.
+  - `aggregates.py` — EPUF composition, per-cell model means, and the aggregation that turns a
+    parameter surface into aggregate earnings. No matplotlib.
+
   Where an estimator does produce figures as a side deliverable (`--mode mle` writes the
   parameter heatmaps), it **lazy-imports** the plot module inside `main()` so the dependency
   never exists at module import time.
+- **The uncapped mean E[X] has exactly one implementation per model**, `cf.dpln_mean` /
+  `cf.mix_mean` in `crosssec_fit.py`. It had grown three (the fitters', `extrapolate_params`',
+  and the validation plot's) — with *different argument orders* for the mixture, which is the
+  shape this class of bug takes. Everything that needs E[X] calls the fitters' version, so the
+  estimator's notion of the mean and the validation's cannot diverge.
 - **Each section has ONE estimation entry point** that dispatches on `--mode`:
   `estimate_cross_sections.py` (`mle` | `mle-gmm` | `both`) and `estimate_g_cohort.py`
   (`ols` | `smm-mean` | `smm-quantiles`). The modules behind them (`crosssec_mle.py`,

@@ -78,19 +78,25 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 
-import crosssec_fit as cf   # DB, SIG_MIN
+import crosssec_fit as cf   # DB, SIG_MIN, dpln_mean, mix_mean
+from benchmarks import ass_uncapped_per_worker
+# The two data edges are IMPORTED, not restated: the parameter anchoring here and the
+# worker-composition scheme in aggregates.py must use the same windows. calibrate_alpha_scale
+# below weights the 1951-55 EPUF composition to hit the published mean, and the validation
+# figure re-weights the resulting parameters the same way. Two independent copies of a
+# "must match" window is how they stop matching.
+#   ANCHOR (2000-04)  forward anchor: shapes frozen + locations wage-shifted off here
+#   BACK   (1951-55)  backward anchor for pre-1951
+#   DATA_LAST         last in-sample year kept (2005-06 dropped as noisy/top-code-distorted)
+from aggregates import ANCHOR, BACK, DATA_LAST
 
 IN      = Path("output/cross_sections/cross_section_params_smoothed.csv")
 OUT     = Path("output/cross_sections/cross_section_params_extrapolated.csv")
 TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
-ASS_XLSX = Path("raw_data/annual_statistical_supplement.xlsx")
 Y0, Y1  = 1937, 2100          # target year range for the synthesized cross-sections
-ANCHOR  = (2000, 2004)        # forward anchor: shapes frozen + locations wage-shifted off here
-BACK    = (1951, 1955)        # backward anchor for pre-1951 (mirrors the composition scheme)
 CAL     = (1937, 1950)        # pre-1951 span the men-alpha tail scale is calibrated over
 ALPHA_K_EPS = 1e-3            # margin keeping k*alpha strictly > 1 (finite uncapped mean)
 ALPHA_K_HI  = 50.0            # upper bound on the per-year alpha scale
-DATA_LAST = 2004              # last in-sample year kept (2005-06 dropped as noisy)
 TR_WAGE_COL = "Average Annual Nominal Wage in Covered Employment APC"
 
 # per sex: (model label, age ceiling, location params, shape params). Locations are
@@ -138,24 +144,6 @@ def anchors(df, window):
     return {k: a.loc[k] for k in a.index}
 
 
-def _ass(col):
-    """Column `col` of the ASS workbook as {year: value} (non-null)."""
-    d = pd.read_excel(ASS_XLSX, sheet_name="data")
-    return {int(y): float(v) for y, v in zip(d["year"], d[col]) if pd.notna(v)}
-
-
-def ass_workers():
-    """Covered-worker counts (persons) per year: ASS num_wrk (thousands -> persons)."""
-    return {y: v * 1e3 for y, v in _ass("num_wrk").items()}
-
-
-def ass_total_earnings():
-    """Aggregate TOTAL (uncapped) covered earnings ($, not $M) per year: aggearn_tot wage + se."""
-    d = pd.read_excel(ASS_XLSX, sheet_name="data")
-    tot = d["aggearn_tot_wage"].fillna(0) + d["aggearn_tot_se"].fillna(0)
-    return {int(y): float(v) * 1e6 for y, v in zip(d["year"], tot) if v > 0}
-
-
 def back_composition():
     """The 1951-55 EPUF (sex, age) joint share of positive earners -- the pre-1951 worker
     composition (same window and slice the validation plot uses so the calibration targets exactly
@@ -169,18 +157,6 @@ def back_composition():
     out = subprocess.run(["duckdb", cf.DB, "-c", q], capture_output=True, text=True, check=True).stdout
     d = pd.read_csv(io.StringIO(out)); tot = d["n"].sum()
     return {(int(r.sex), int(r.age)): r.n / tot for r in d.itertuples()}
-
-
-def _dpln_mean(alpha, beta, nu, tau):
-    """UNCAPPED mean E[X] of a double Pareto-lognormal; INFINITE where alpha <= 1."""
-    if alpha <= 1.0:
-        return np.inf
-    return np.exp(nu + tau * tau / 2) * (alpha * beta) / ((alpha - 1) * (beta + 1))
-
-
-def _mix_mean(w, mu1, sig1, mu2, sig2):
-    """UNCAPPED mean of a two-component lognormal mixture (always finite)."""
-    return w * np.exp(mu1 + sig1 ** 2 / 2) + (1 - w) * np.exp(mu2 + sig2 ** 2 / 2)
 
 
 def calibrate_alpha_scale(anc_back, G, Gbar_back):
@@ -201,8 +177,8 @@ def calibrate_alpha_scale(anc_back, G, Gbar_back):
 
     Returns ({year: k}, {year: model_uncapped/ASS ratio})."""
     comp = back_composition()
-    cov, tot = ass_workers(), ass_total_earnings()
-    yrs = [y for y in range(CAL[0], CAL[1] + 1) if y in cov and y in tot]
+    target_pw = ass_uncapped_per_worker()      # $/worker; the SAME published moment
+    yrs = [y for y in range(CAL[0], CAL[1] + 1) if y in target_pw]
     men = {a: anc_back[(1, a)] for (s, a) in anc_back if s == 1}
     wom = {a: anc_back[(2, a)] for (s, a) in anc_back if s == 2}
 
@@ -213,12 +189,13 @@ def calibrate_alpha_scale(anc_back, G, Gbar_back):
                 b = men.get(age)
                 if b is None:
                     continue
-                m = _dpln_mean(k * b["alpha"], b["beta"], b["nu"] + shift, b["tau"])
+                m = cf.dpln_mean(k * b["alpha"], b["beta"], b["nu"] + shift, b["tau"])
             else:
                 b = wom.get(age)
                 if b is None:
                     continue
-                m = _mix_mean(b["w"], b["mu1"] + shift, b["sig1"], b["mu2"] + shift, b["sig2"])
+                m = cf.mix_mean(b["mu1"] + shift, b["mu2"] + shift, b["sig1"], b["sig2"],
+                                b["w"])
             if not np.isfinite(m):
                 return np.inf
             s += m * frac
@@ -228,7 +205,7 @@ def calibrate_alpha_scale(anc_back, G, Gbar_back):
     k_lo = (1.0 + ALPHA_K_EPS) / a_min          # every k*alpha > 1 -> every cell mean finite
     scale, fit = {}, {}
     for y in yrs:
-        target = tot[y] / cov[y]
+        target = target_pw[y]
         f_lo, f_hi = model_pw(y, k_lo) - target, model_pw(y, ALPHA_K_HI) - target
         if not np.isfinite(f_lo) or f_lo < 0:   # even the fattest allowed tail undershoots
             k = k_lo

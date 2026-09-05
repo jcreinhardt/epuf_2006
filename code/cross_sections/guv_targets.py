@@ -31,9 +31,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import brentq
 from scipy.special import erfcx, ndtr
 
-from crosssec_fit import nl_logpdf, nl_cdf
+from crosssec_fit import mix_cdf, mix_logpdf, nl_cdf, nl_logpdf
 
 # ---- log-space Normal-Laplace pdf/cdf. crosssec_fit's nl_cdf/nl_logpdf multiply
 # phi(z) by a Mills ratio whose erfcx overflows ~38 sd out, which the quadrature grid
@@ -134,6 +135,55 @@ def load_guv():
 def load_deflator():
     base = _PCE_GKSW[BASE_YEAR - 1947]
     return {1947 + i: base / p for i, p in enumerate(_PCE_GKSW)}   # nominal x factor -> real 2013 $
+
+
+# -------------------------------------------------- model-side functionals
+# The MODEL counterpart of the guv targets above: the same functionals, computed from a
+# fitted parameter row instead of read from a published file. It lives here rather than
+# with a figure because two separate report scripts need it (plot_guv_comparison and the
+# 2026-08-24 plot_guv_gap_heatmaps), and reaching through a plotting module for it is the
+# dependency this module was split out to remove.
+def _cell_dists(row):
+    """(logpdf, cdf) callables on y = log earnings for one parameter row."""
+    if row["sex"] == 1:
+        a, b, nu, tau = row["alpha"], row["beta"], row["nu"], row["tau"]
+        return (lambda y: nl_logpdf_s(y, a, b, nu, tau),
+                lambda y: nl_cdf_s(y, a, b, nu, tau))
+    m1, m2, s1, s2, w = row["mu1"], row["mu2"], row["sig1"], row["sig2"], row["w"]
+    return (lambda y: mix_logpdf(y, m1, m2, s1, s2, w),
+            lambda y: mix_cdf(y, m1, m2, s1, s2, w))
+
+
+def cell_functionals(row, x_min=None, ngrid=8001):
+    """Log-moments (quadrature) and earnings quantiles (root-finding) of one fitted cell,
+    optionally conditional on earnings > x_min (nominal $). Returns a dict. The 1e-10
+    tail cutoffs matter: the NL tails are exponential, so kurtlog converges slowly --
+    truncating at 1e-7 already costs ~2e-3."""
+    logpdf, cdf = _cell_dists(row)
+    center = row["nu"] if row["sex"] == 1 else (row["w"] * row["mu1"]
+                                                + (1 - row["w"]) * row["mu2"])
+    ylo = _bracket(cdf, 1e-10, center, 1.0, up=False)
+    yhi = _bracket(cdf, 1.0 - 1e-10, center, 1.0, up=True)
+
+    t = -np.inf if x_min is None else np.log(x_min)
+    Ft = 0.0 if x_min is None else float(cdf(t))
+    glo = max(ylo, t)
+
+    y = np.linspace(glo, yhi, ngrid)
+    wts = np.exp(logpdf(y))
+    wts[0] *= 0.5; wts[-1] *= 0.5            # trapezoid
+    wts /= wts.sum()                          # renormalizes truncation + conditioning
+    m1 = wts @ y
+    d = y - m1
+    m2, m3, m4 = wts @ d**2, wts @ d**3, wts @ d**4
+    out = {"meanlog": m1, "sdlog": np.sqrt(m2),
+           "skewlog": m3 / m2**1.5, "kurtlog": m4 / m2**2}
+
+    for q, col in zip(QUANTS, QCOLS):
+        target = Ft + q * (1.0 - Ft)
+        out[col] = np.exp(brentq(lambda v: cdf(v) - target, glo - 1.0, yhi + 1.0))
+    return out
+
 
 
 def _check_stable_vs_original():

@@ -126,8 +126,12 @@ epuf_2006/
 │   │   ├── crosssec_mle.py                # --mode mle:     joint smoothed, aggregate-constrained censored MLE
 │   │   ├── crosssec_gmm.py                # --mode mle-gmm: convex combination of that likelihood with a GMM
 │   │   │                                  #                 criterion on the published GKSW targets
-│   │   ├── guv_targets.py                 # GKSW target loading + stable log-space Normal-Laplace pdf/cdf
+│   │   ├── guv_targets.py                 # GKSW target loading, stable log-space Normal-Laplace pdf/cdf,
+│   │   │                                  #   and the model-side cell functionals
+│   │   ├── benchmarks.py                  # published ASS + TR series (the one definition of every target)
+│   │   ├── aggregates.py                  # EPUF composition + model → aggregate earnings (no matplotlib)
 │   │   ├── extrapolate_params.py          # stage 2: extrapolate off the data edges → cross_section_params_extrapolated.csv
+│   │   ├── agg_tax_emp_weighted.py        # aggregate taxable weighted by the project_vu employment panel
 │   │   └── plots/
 │   │       ├── plot_cross_section.py      # raw histogram + fitted density, one (age, cohort, sex) cell
 │   │       ├── plot_param.py              # cohort×age heatmaps of every fitted/smoothed parameter

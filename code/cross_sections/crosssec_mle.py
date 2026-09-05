@@ -48,17 +48,17 @@ import copy
 import subprocess
 from io import StringIO
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, "code/cross_sections")   # run from project root, per repo convention
 import numpy as np
 import pandas as pd
 import crosssec_fit as cf
+from benchmarks import ass_uncapped_per_worker
 
 YEARS      = range(1951, 2007)
 MIN_N      = 1000               # skip cells with fewer positive-earnings observations
 MATCH_AGES = (15, 77)           # cells entering the year's aggregate-mean constraint
-ASS_XLSX   = Path("raw_data/annual_statistical_supplement.xlsx")
 MOMENT_TOL = 1e-3               # relative tolerance on the per-year aggregate-mean match
 ETA_HI     = 256.0             # ceiling on the per-year multiplier (tail fully thinned before this)
 K_CAND     = 3                 # top-K multi-start candidates kept per cell (skill Sec.8)
@@ -109,16 +109,6 @@ def load_year(year):
     out = subprocess.run(["duckdb", "-readonly", cf.DB, "-noheader", "-csv", "-c", q],
                          capture_output=True, text=True, check=True).stdout
     return pd.read_csv(StringIO(out), header=None, names=["sex", "age", "earnings"])
-
-
-def ass_uncapped_target():
-    """ASS average UNCAPPED earnings per covered worker ($/worker) per year -- the published
-    mean the censored MLE can't see (mass above the cap). Matches plot_agg_tax_total."""
-    d = pd.read_excel(ASS_XLSX, sheet_name="data")
-    tot = d["aggearn_tot_wage"].fillna(0) + d["aggearn_tot_se"].fillna(0)   # $M
-    return {int(y): float(t) * 1e6 / (float(nw) * 1e3)
-            for y, t, nw in zip(d["year"], tot, d["num_wrk"])
-            if t > 0 and pd.notna(nw) and nw > 0}
 
 
 def cells_by_age(df):
@@ -446,7 +436,8 @@ def write_csv(path, rows):
 
 
 def main(jobs=None, rho=None, rho_steps=RHO_STEPS, plots=True):
-    target = ass_uncapped_target()
+    target = ass_uncapped_per_worker()   # $/worker; benchmarks.py, shared with
+                                        # extrapolate_params and the validation figure
     t0 = time.time()
 
     print("=== stage 0: multi-start candidates ===", flush=True)

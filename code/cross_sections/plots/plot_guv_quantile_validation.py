@@ -49,7 +49,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import crosssec_fit as cf
-from plot_guv_comparison import load_guv, load_deflator, min_wage, QUANTS, QCOLS
+from guv_targets import load_guv, load_deflator, min_wage, QUANTS, QCOLS
 
 YEARS = (1957, 2006)      # EPUF in-sample years inside the guv window
 AGES  = (25, 55)
