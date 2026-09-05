@@ -141,6 +141,22 @@ percentage point despite sharing no parameters.
 
 `--mode ols` needs `replication_repos/CMS` for the SSA average-wage series; the SMM modes do not.
 
+Two cohort×age heatmap scripts live with the report they were written for
+(`presentation/2026-08-24/`) rather than under `code/` + `output/`, so that folder is
+self-contained. They are still run **from the project root** and write into
+`presentation/2026-08-24/figures/`:
+
+```bash
+python presentation/2026-08-24/code/plot_censored_share.py [csv]   # share of a cell censored at the cap
+python presentation/2026-08-24/code/plot_guv_gap_heatmaps.py [--params CSV] [--tag T] [--reuse] [--units absolute|logpoints|both]
+```
+
+`plot_guv_gap_heatmaps.py` compares the fitted surface against the GKSW/GKOS 2022
+cohort×age file per cell (the per-cell version of `plot_guv_comparison.py`'s averaged
+lines), one figure per functional with men and women side by side, in **both** absolute
+units and log points. The log-point set covers the level functionals only — sd/skew/kurt
+of logs are already scale-free, so no duplicate is written.
+
 The per-figure scripts read the CSVs, so they are seconds, not minutes. `plot_cross_section.py`
 defaults to the pipeline parameters; `--refit` fits the cell standalone and `--overlay` draws
 both, which is how to see what smoothing changed in one cell.

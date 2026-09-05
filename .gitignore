@@ -40,10 +40,11 @@ output/**
 
 # LaTeX build products — the deck is regenerable from its .tex (xelatex, run twice).
 # Decks now live one level down, in presentation/<YYYY-MM-DD>/, so these match at any
-# depth. A compiled deck is a .pdf sitting next to its .tex; a FIGURE is a .pdf under
-# figures/ and is kept, because a snapshot's whole point is that it still renders after
-# the code that made it has moved on.
+# depth. A compiled deck is a .pdf sitting next to its .tex.
 presentation/**/*.pdf
+# ...but a report's own figures, written next to it by the plotting code that lives in
+# the same folder, are the report's CONTENT, not a build product: a snapshot's whole
+# point is that it still renders after the code that made it has moved on.
 !presentation/**/figures/*.pdf
 presentation/**/*.aux
 presentation/**/*.nav
@@ -55,4 +56,6 @@ presentation/**/*.log
 # External replication packages: nested git clones (CMS, GKOS_2022), cloned or symlinked
 # in, not authored here. `--mode ols` and compare_g_cms.py read CMS's average-wage series
 # from this tree, so it is a real dependency -- see README for where to get it.
+# NO trailing slash: inside a git worktree this path is a SYMLINK to the main checkout,
+# and "replication_repos/" would match only a real directory.
 replication_repos

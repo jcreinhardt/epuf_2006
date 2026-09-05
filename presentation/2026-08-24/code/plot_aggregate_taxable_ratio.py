@@ -17,8 +17,8 @@ tax_max_2013(y) / nominal taxable max(y) (ASS workbook) = their CPI factor per y
 matches the TR2023 Adjusted CPI to 4 decimals on the 1970+ overlap, and extends it back to
 1937, which is what lets the purple line reach 1951 here.
 
-Run from the project root:  python presentation/08_24/plot_aggregate_taxable_ratio.py
-  -> presentation/08_24/aggregate_taxable_ratio_1951_2006.pdf (+ .png)
+Run from the project root:  python presentation/2026-08-24/code/plot_aggregate_taxable_ratio.py
+  -> presentation/2026-08-24/figures/aggregate_taxable_ratio_1951_2006.pdf (+ .png)
 """
 import sys
 
