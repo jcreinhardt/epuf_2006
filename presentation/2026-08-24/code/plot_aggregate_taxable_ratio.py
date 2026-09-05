@@ -22,7 +22,7 @@ Run from the project root:  python presentation/08_24/plot_aggregate_taxable_rat
 """
 import sys
 
-sys.path.insert(0, "code/cross_sections")   # run from project root, per repo convention
+sys.path[:0] = ["code/cross_sections", "code/cross_sections/plots"]   # run from project root
 import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
@@ -33,7 +33,7 @@ from plot_agg_tax_total import ass_taxable, epuf_direct, C_BENCH, C_EPUF, C_MODE
 VU = ("/Users/jr2728/Dropbox/GZ SSec RA share 2023-present/project_vu - Copy (2)/"
       "data/intermediate/")
 OURS_CSV = "output/cross_sections/agg_taxable_emp_weighted.csv"
-OUT = "presentation/08_24/aggregate_taxable_ratio_1951_2006"
+OUT = "presentation/2026-08-24/figures/aggregate_taxable_ratio_1951_2006"
 YEARS = list(range(1951, 2007))
 
 

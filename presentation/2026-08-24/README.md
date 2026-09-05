@@ -1,12 +1,19 @@
 # 2026-08-24 — g(t) re-estimated as a cohort x sex cubic, vs. CMS
 
-Frozen snapshot of the two scripts as they stood on 2026-08-24, in `code/`, plus the
-figures they produced, in `figures/`.  Run from the **project root**:
+Frozen snapshot of the scripts as they stood on 2026-08-24, in `code/`, plus the figures
+they produced, in `figures/`.  Run from the **project root**:
 
 ```bash
 python presentation/2026-08-24/code/estimate_g_cohort.py --sel sel3
 python presentation/2026-08-24/code/compare_g_cms.py --sel sel3 --outdir presentation/2026-08-24/figures
+python presentation/2026-08-24/code/plot_aggregate_taxable_ratio.py
 ```
+
+`plot_aggregate_taxable_ratio.py` arrived separately (it is not part of the g(t)-vs-CMS
+snapshot): it draws EPUF, the employment-panel-weighted model and e9f as ratios to ASS
+over 1951-2006, and reads `output/cross_sections/agg_taxable_emp_weighted.csv`, so run
+`code/cross_sections/agg_tax_emp_weighted.py` first. Unlike the two scripts above it is
+NOT frozen -- it imports the live `plots/plot_agg_tax_total.py`.
 
 THE SNAPSHOT IS DELIBERATELY FROZEN AND NO LONGER MATCHES THE LIVE PIPELINE. Since this
 was presented, `code/dynamics/` was reorganised: the estimator here became the library

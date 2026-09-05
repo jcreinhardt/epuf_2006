@@ -37,7 +37,7 @@ If the script exits asking for it: in Finder right-click the file -> Make Availa
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "code/cross_sections")   # run from project root, per repo convention
+sys.path[:0] = ["code/cross_sections", "code/cross_sections/plots"]   # run from project root
 import numpy as np
 import pandas as pd
 import matplotlib
