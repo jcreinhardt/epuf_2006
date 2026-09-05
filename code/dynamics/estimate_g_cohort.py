@@ -103,7 +103,6 @@ def build_parser():
     g.add_argument("--shrink", type=float, default=0.10,
                    help="shrinkage of S toward its diagonal")
     g.add_argument("--jobs", type=int, default=8)
-    g.add_argument("--ls", default=None, help="fit CSV to overlay on the comparison figure")
     return ap
 
 
@@ -150,8 +149,6 @@ def main(argv=None):
            "--sel", a.sel, "--degree", str(a.degree), "--seed", str(a.seed),
            "--steps", str(a.steps), "--reps", str(a.reps), "--wnoise", str(a.wnoise),
            "--shrink", str(a.shrink), "--jobs", str(a.jobs), "--out", out, "--tag", a.tag]
-    if a.ls:
-        fwd += ["--ls", a.ls]
     print("=" * 30 + f" mode: {a.mode} (moments: {SMM_MOMENTS[a.mode]})", flush=True)
     gcohort_smm.main(fwd)
 

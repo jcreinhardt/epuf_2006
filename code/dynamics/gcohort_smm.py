@@ -109,10 +109,18 @@ test of "the fixed GKOS parameters generate this cohort's whole distribution".
 
 Run from the project root:
     python code/dynamics/estimate_g_cohort.py --mode smm-quantiles [--sel sel0] [--degree 3] [--jobs 8]
-Output: output/dynamics/g_cohort_gmm<tag>.csv             (same layout as the LS fit, plus
-                                                           standard errors and the J test)
-        output/dynamics/g_gmm_vs_ls<tag>.{pdf,png}
-        output/dynamics/g_gmm_moment_fit<tag>.{pdf,png}
+Output: output/dynamics/g_cohort_<mode><tag>.csv  -- the ONLY artifact. Same leading
+        columns as the other modes, plus standard errors, the weight-matrix-noise
+        columns, and the J test.
+
+This module draws nothing. It used to emit two diagnostic figures per run --
+g_gmm_vs_ls<tag> (coefficients by cohort against an LS overlay) and
+g_gmm_moment_fit<tag> (mean |model - data| by moment, and the J p-value). Both were
+dropped: everything they showed is in the printed summary and the CSV, the overlay
+defaulted to `g_cohort_cubic_<sel>.csv` -- a file no mode has produced since the
+estimators were unified, so on a clean checkout it silently drew nothing and here it
+silently compared against a pre-refactor fit -- and the tag names the CSV, so two runs
+sharing a tag would overwrite each other's figures while leaving distinct CSVs.
 """
 import os
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
@@ -128,10 +136,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from scipy.linalg import cholesky, solve_triangular
 from scipy.optimize import least_squares
 from scipy.stats import chi2
@@ -152,7 +156,6 @@ LEVEL = ["meanlog", "p10", "p25", "p50", "p75", "p90", "p98"]
 SHAPE = ["sdlog", "skewlog", "kurtlog"]
 SETS = {"all": MOMENTS, "level": LEVEL, "quantiles": MOMENTS[4:], "mean": ["meanlog"]}
 
-C_GMM, C_LS = "#eb6834", "#2a78d6"
 
 
 # --- data ---------------------------------------------------------------------
@@ -452,7 +455,6 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=20260821)
     ap.add_argument("--out", default=None, help="parameter CSV (default: tagged by --tag)")
     ap.add_argument("--tag", default="", help="suffix on every output filename")
-    ap.add_argument("--ls", default=None, help="LS fit CSV to overlay (default: matching --sel)")
     args = ap.parse_args(argv)
 
     os.makedirs(OUT, exist_ok=True)
@@ -488,7 +490,6 @@ def main(argv=None):
     rows.sort(key=lambda r: (r["sex"], r["cohort"]))
     write_csv(rows, args.out)
     report(rows, keep, args)
-    plot(rows, keep, args)
 
 
 def write_csv(rows, path):
@@ -540,83 +541,3 @@ def report(rows, keep, args):
         print(f"\n{label}: rmse median {np.median(rm):.4f}, max {rm.max():.4f}   "
               f"| J test rejects at 5% in {100 * (pv < 0.05).mean():.0f}% of blocks "
               f"(median p {np.median(pv):.3g}, df {sub[0]['df']})")
-
-
-def _ls_table(args):
-    path = args.ls or f"{OUT}/g_cohort_cubic_{args.sel}.csv"
-    if not os.path.exists(path):
-        return None
-    return pd.read_csv(path)
-
-
-def plot(rows, keep, args):
-    d = pd.DataFrame([dict(sex=r["sex"], cohort=r["cohort"], p=r["p_value"],
-                           **{f"g{k}": r["coef"][k] for k in range(4)},
-                           **{f"se{k}": r["se"][k] for k in range(4)})
-                      for r in rows])
-    ls = _ls_table(args)
-    npar = args.degree + 1
-    fig, axes = plt.subplots(2, npar, figsize=(3.0 * npar, 5.2), sharex=True)
-    for i, sex in enumerate(("male", "female")):
-        s = d[d["sex"] == sex].sort_values("cohort")
-        for k in range(npar):
-            ax = axes[i, k]
-            ax.fill_between(s["cohort"], s[f"g{k}"] - 1.96 * s[f"se{k}"],
-                            s[f"g{k}"] + 1.96 * s[f"se{k}"], color=C_GMM, alpha=0.22, lw=0)
-            ax.plot(s["cohort"], s[f"g{k}"], color=C_GMM, lw=1.5, label="GMM (all moments)")
-            if ls is not None:
-                t = ls[ls["sex"] == sex].sort_values("cohort")
-                ax.plot(t["cohort"], t[f"g{k}"], color=C_LS, lw=1.3, ls=(0, (3, 2)),
-                        label="LS (meanlog only)")
-            ax.set_title(f"{sex}: g{k}", fontsize=9)
-            ax.tick_params(labelsize=8)
-            for side in ("top", "right"):
-                ax.spines[side].set_visible(False)
-            if i == 1:
-                ax.set_xlabel("cohort (year at 25)", fontsize=8)
-    axes[0, npar - 1].legend(frameon=False, fontsize=7)
-    fig.suptitle(f"g(t) coefficients, centred on age 40  —  {args.sel}, "
-                 f"degree {args.degree}, shaded 95% CI", fontsize=10)
-    fig.tight_layout()
-    for ext in ("pdf", "png"):
-        fig.savefig(f"{OUT}/g_gmm_vs_ls{args.tag}.{ext}", dpi=200)
-    plt.close(fig)
-
-    names = [MOMENTS[k] for k in keep]
-    fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.4))
-    ax = axes[0]
-    for i, nm in enumerate(names):
-        for sex, ls_ in (("male", "-"), ("female", (0, (2, 2)))):
-            sub = [r for r in rows if r["sex"] == sex]
-            ax.plot([r["cohort"] for r in sub], [r["by_moment"][i] for r in sub],
-                    ls=ls_, lw=1.1, color=plt.cm.viridis(i / max(len(names) - 1, 1)),
-                    label=nm if sex == "male" else None)
-    ax.set_yscale("log")
-    ax.set_title("mean |model − data| by moment (solid men, dashed women)", fontsize=9)
-    ax.set_xlabel("cohort (year at 25)", fontsize=8)
-    ax.legend(frameon=False, fontsize=6, ncol=2)
-
-    ax = axes[1]
-    for sex, col in (("male", "#2a78d6"), ("female", "#c1554d")):
-        sub = [r for r in rows if r["sex"] == sex]
-        ax.plot([r["cohort"] for r in sub], [r["p_value"] for r in sub], lw=1.3,
-                color=col, label=sex)
-    ax.axhline(0.05, color="0.6", lw=0.8, ls=(0, (3, 2)))
-    ax.set_yscale("log")
-    ax.set_title(f"J test p-value (df {rows[0]['df']})", fontsize=9)
-    ax.set_xlabel("cohort (year at 25)", fontsize=8)
-    ax.legend(frameon=False, fontsize=8)
-    for a in axes:
-        a.tick_params(labelsize=8)
-        for side in ("top", "right"):
-            a.spines[side].set_visible(False)
-    fig.tight_layout()
-    for ext in ("pdf", "png"):
-        fig.savefig(f"{OUT}/g_gmm_moment_fit{args.tag}.{ext}", dpi=200)
-    plt.close(fig)
-    print(f"wrote {OUT}/g_gmm_vs_ls{args.tag}.pdf/.png and "
-          f"{OUT}/g_gmm_moment_fit{args.tag}.pdf/.png")
-
-
-if __name__ == "__main__":
-    main()

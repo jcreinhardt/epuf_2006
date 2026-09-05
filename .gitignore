@@ -24,7 +24,7 @@ env/
 
 # External replication packages (own git repos, multi-GB datastores) — clone/download
 # separately; e.g. the CMS (JF 2025) package used by code/dynamics.
-replication_repos/
+replication_repos
 
 # Data and generated artifacts — large and/or regenerable, not version-controlled.
 # Rebuild the DB from raw_data with code/data_import/build_epuf_duckdb.sql
@@ -38,10 +38,21 @@ output/**
 !output/**/
 !output/**/.gitkeep
 
-# LaTeX build products — the deck is regenerable from its .tex (xelatex, run twice)
-presentation/*.pdf
-presentation/*.aux
-presentation/*.nav
-presentation/*.out
-presentation/*.snm
-presentation/*.toc
+# LaTeX build products — the deck is regenerable from its .tex (xelatex, run twice).
+# Decks now live one level down, in presentation/<YYYY-MM-DD>/, so these match at any
+# depth. A compiled deck is a .pdf sitting next to its .tex; a FIGURE is a .pdf under
+# figures/ and is kept, because a snapshot's whole point is that it still renders after
+# the code that made it has moved on.
+presentation/**/*.pdf
+!presentation/**/figures/*.pdf
+presentation/**/*.aux
+presentation/**/*.nav
+presentation/**/*.out
+presentation/**/*.snm
+presentation/**/*.toc
+presentation/**/*.log
+
+# External replication packages: nested git clones (CMS, GKOS_2022), cloned or symlinked
+# in, not authored here. `--mode ols` and compare_g_cms.py read CMS's average-wage series
+# from this tree, so it is a real dependency -- see README for where to get it.
+replication_repos
