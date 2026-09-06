@@ -4,7 +4,7 @@ cross-sections over a target year range (default 1937-2100), by ANCHORING at the
 recent data edge and driving only the location parameters with an external nominal
 wage-growth series.
 
-The joint smoothed-constrained fits (estimate_cross_sections.py --mode mle) cover the years the data see (1951-2006),
+The joint smoothed-constrained fits (estimate_cross_sections.py) cover the years the data see (1951-2006),
 and THOSE are the interpolation -- kept verbatim. To reach the cohorts a 1937-2100
 panel needs (1860-2085 over ages 15-77) we extrapolate the missing years. The old
 approach fit a global polynomial per parameter and let a free linear-in-year slope
@@ -78,7 +78,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 
-import crosssec_fit as cf   # DB, SIG_MIN, dpln_mean, mix_mean
+import xs_model as xm   # DB, SIG_MIN, dpln_mean, mix_mean
 from benchmarks import ass_uncapped_per_worker
 # The two data edges are IMPORTED, not restated: the parameter anchoring here and the
 # worker-composition scheme in aggregates.py must use the same windows. calibrate_alpha_scale
@@ -114,7 +114,7 @@ def wage_log_index(y0, y1):
     Trustees Report's projected wage growth (APC, % per year) spliced on forward."""
     # ASS historical log levels (annual 1951+, sparse 1937/40/45/50 before)
     out = subprocess.run(
-        ["duckdb", cf.DB, "-c",
+        ["duckdb", xm.DB, "-c",
          "COPY (SELECT year, avg_total_earnings_usd FROM supplement_4b1 "
          "WHERE avg_total_earnings_usd IS NOT NULL AND year <= 2004 ORDER BY year) "
          "TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);"],
@@ -154,7 +154,7 @@ def back_composition():
          f"AND d.sex IN (1, 2) AND d.yob IS NOT NULL "
          f"AND (a.year - d.yob) BETWEEN 15 AND 77 GROUP BY 1, 2 ORDER BY 1, 2) "
          f"TO '/dev/stdout' (FORMAT CSV, HEADER TRUE);")
-    out = subprocess.run(["duckdb", cf.DB, "-c", q], capture_output=True, text=True, check=True).stdout
+    out = subprocess.run(["duckdb", xm.DB, "-c", q], capture_output=True, text=True, check=True).stdout
     d = pd.read_csv(io.StringIO(out)); tot = d["n"].sum()
     return {(int(r.sex), int(r.age)): r.n / tot for r in d.itertuples()}
 
@@ -189,12 +189,12 @@ def calibrate_alpha_scale(anc_back, G, Gbar_back):
                 b = men.get(age)
                 if b is None:
                     continue
-                m = cf.dpln_mean(k * b["alpha"], b["beta"], b["nu"] + shift, b["tau"])
+                m = xm.dpln_mean(k * b["alpha"], b["beta"], b["nu"] + shift, b["tau"])
             else:
                 b = wom.get(age)
                 if b is None:
                     continue
-                m = cf.mix_mean(b["mu1"] + shift, b["mu2"] + shift, b["sig1"], b["sig2"],
+                m = xm.mix_mean(b["mu1"] + shift, b["mu2"] + shift, b["sig1"], b["sig2"],
                                 b["w"])
             if not np.isfinite(m):
                 return np.inf
@@ -262,8 +262,8 @@ def build(df, y0, y1):
                     row.update(mu1=np.nan, mu2=np.nan, sig1=np.nan, sig2=np.nan, w=np.nan)
                 else:
                     row.update(alpha=np.nan, beta=np.nan, nu=np.nan, tau=np.nan)
-                    row["sig1"] = max(row["sig1"], cf.SIG_MIN)
-                    row["sig2"] = max(row["sig2"], cf.SIG_MIN)
+                    row["sig1"] = max(row["sig1"], xm.SIG_MIN)
+                    row["sig2"] = max(row["sig2"], xm.SIG_MIN)
                 row.update(year=year, sex=sex, age=age, cohort=year - age, model=model)
                 rows.append(row)
 

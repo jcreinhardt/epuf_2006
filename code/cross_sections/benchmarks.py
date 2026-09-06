@@ -69,7 +69,7 @@ def ass_uncapped_per_worker():
     """ASS average UNCAPPED earnings per covered worker ($/worker) per year -- aggearn_tot
     over num_wrk. THE quantity the pipeline is pinned to, in both directions:
 
-      * crosssec_mle stage 3 root-finds the per-year eta so the fitted surface's
+      * estimate_cross_sections stage 3 root-finds the per-year eta so the fitted surface's
         composition-weighted E[X] hits this (1951-2006);
       * extrapolate_params.calibrate_alpha_scale root-finds men's pre-1951 alpha scale
         against the same target (1937-1950);

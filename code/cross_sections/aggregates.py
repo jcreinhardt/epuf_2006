@@ -34,7 +34,7 @@ sys.path.insert(0, "code/cross_sections")   # run from project root, per repo co
 import numpy as np
 import pandas as pd
 
-import crosssec_fit as cf
+import xs_model as xm
 from benchmarks import MUSD
 
 PARAMS = Path("output/cross_sections/cross_section_params_extrapolated.csv")
@@ -45,7 +45,7 @@ DATA_LAST = 2004          # observed per-year composition used through here; fix
 
 
 def _duck(q):
-    return subprocess.run(["duckdb", cf.DB, "-c", q], capture_output=True, text=True,
+    return subprocess.run(["duckdb", xm.DB, "-c", q], capture_output=True, text=True,
                           check=True).stdout
 
 
@@ -137,12 +137,12 @@ def model_mean_taxable(row, taxmax):
     yy = np.linspace(np.log(1.0), thi, 6000)
     if row["model"] == "dpln":
         a, b, nu, tau = (float(row[k]) for k in ("alpha", "beta", "nu", "tau"))
-        dens = np.exp(cf.nl_logpdf(yy, a, b, nu, tau))
-        sf = 1.0 - cf.nl_cdf(thi, a, b, nu, tau)
+        dens = np.exp(xm.nl_logpdf(yy, a, b, nu, tau))
+        sf = 1.0 - xm.nl_cdf(thi, a, b, nu, tau)
     else:
         mu1, mu2, s1, s2, w = (float(row[k]) for k in ("mu1", "mu2", "sig1", "sig2", "w"))
-        dens = np.exp(cf.mix_logpdf(yy, mu1, mu2, s1, s2, w))
-        sf = cf.mix_sf(thi, mu1, mu2, s1, s2, w)
+        dens = np.exp(xm.mix_logpdf(yy, mu1, mu2, s1, s2, w))
+        sf = xm.mix_sf(thi, mu1, mu2, s1, s2, w)
     # the Normal-Laplace pdf overflows to +inf ~30 sigma into the lower tail (Mills ratio blows up
     # where the density is negligible); zero those out.
     integrand = np.nan_to_num(np.exp(yy) * dens, nan=0.0, posinf=0.0, neginf=0.0)
@@ -151,13 +151,13 @@ def model_mean_taxable(row, taxmax):
 
 def uncapped_cell_mean(row):
     """Analytic UNCAPPED mean E[X] of one parameter row -- NO cap applied. Delegates to the
-    fitters' own closed forms (cf.dpln_mean / cf.mix_mean) so the estimator's notion of E[X]
+    fitters' own closed forms (xm.dpln_mean / xm.mix_mean) so the estimator's notion of E[X]
     and the validation's are the same code; men's is INFINITE where alpha <= 1, the
     censored-MLE heavy-tail pathology (above the cap the upper Pareto index is unidentified
     and can park below 1)."""
     if int(row["sex"]) == 1:
-        return cf.dpln_mean(row["alpha"], row["beta"], row["nu"], row["tau"])
-    return cf.mix_mean(row["mu1"], row["mu2"], row["sig1"], row["sig2"], row["w"])
+        return xm.dpln_mean(row["alpha"], row["beta"], row["nu"], row["tau"])
+    return xm.mix_mean(row["mu1"], row["mu2"], row["sig1"], row["sig2"], row["w"])
 
 
 def model_means(params, taxmax):

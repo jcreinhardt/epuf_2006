@@ -270,7 +270,7 @@ def main(gkos_path=None, e9f_path=None, gkos_mean_path=None):
         gkos_mean, _, _ = load_gkos(gkos_mean_path)
 
     # ---- uncapped: model implied mean E[X] per worker vs ASS aggearn_tot/worker ----
-    # $ per worker -- the SAME published quantity crosssec_mle pins the joint solve to and
+    # $ per worker -- the SAME published quantity estimate_cross_sections pins the joint solve to and
     # extrapolate_params calibrates pre-1951 alpha against, so this row validates the
     # estimator against its own target rather than a separately-derived lookalike.
     ass_unc = ass_uncapped_per_worker()

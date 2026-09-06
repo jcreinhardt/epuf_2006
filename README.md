@@ -121,11 +121,11 @@ epuf_2006/
 │   │   └── plots/
 │   │       └── plot_chart4_replication.py # replicate Chart 4 → output/ssa_replication/chart4_replication.pdf
 │   ├── cross_sections/
-│   │   ├── estimate_cross_sections.py     # UNIFIED ENTRY POINT: --mode mle | mle-gmm | both
-│   │   ├── crosssec_fit.py                # shared (year, sex[, age]) fitters: dPlN (men) + lognormal mixture (women)
-│   │   ├── crosssec_mle.py                # --mode mle:     joint smoothed, aggregate-constrained censored MLE
-│   │   ├── crosssec_gmm.py                # --mode mle-gmm: convex combination of that likelihood with a GMM
-│   │   │                                  #                 criterion on the published GKSW targets
+│   │   ├── estimate_cross_sections.py     # THE ESTIMATOR: joint solve combining both data terms, smoothed
+│   │   │                                  #   along age and pinned to the ASS aggregate (--lam weights them)
+│   │   ├── xs_model.py                    # the models: dPlN (men) + lognormal mixture (women), g(theta), E[X]
+│   │   ├── obj_mle.py                     # data term 1: the doubly censored EPUF log-likelihood
+│   │   ├── obj_gmm.py                     # data term 2: SHAPE-ONLY GMM criterion on the published GKSW targets
 │   │   ├── guv_targets.py                 # GKSW target loading, stable log-space Normal-Laplace pdf/cdf,
 │   │   │                                  #   and the model-side cell functionals
 │   │   ├── benchmarks.py                  # published ASS + TR series (the one definition of every target)
@@ -293,24 +293,24 @@ parametric distribution to **log-earnings** by censored maximum likelihood. The 
 different families — men a **double Pareto-lognormal** (single mode, heavy upper tail), women a
 **two-component lognormal mixture** (the part-time/full-time bimodality) — but they share one
 censored log-likelihood, derived below. The shared fitters live in
-`code/cross_sections/crosssec_fit.py`. The analysis is a **two-stage pipeline**: one joint solve
+`code/cross_sections/xs_model.py`. The analysis is a **two-stage pipeline**: one joint solve
 that fits every cell while simultaneously smoothing along age and pinning each year's uncapped
 aggregate mean to the published ASS benchmark, then an extrapolation off the two data edges.
 (Fitting and smoothing were once separate stages; they have to be solved together, because
 smoothing after constraining breaks the constraint and constraining after smoothing breaks the
 smoothness — see `CLAUDE.md` for the details of the joint solve.)
 
-All estimation goes through **one entry point**, `estimate_cross_sections.py`, whose `--mode`
-selects the data term. `--mode mle` is the canonical pipeline; `--mode mle-gmm` combines the same
-censored likelihood with a GMM criterion on the published GKSW targets (see `CLAUDE.md`).
+All estimation goes through **one entry point**, `estimate_cross_sections.py`, which fits both
+data terms at once: the censored EPUF likelihood and a GMM criterion on the published GKSW
+targets, in the convex combination `(1−λ)·negll + λ·n·Q`. `--lam 0` reduces it to the pure
+censored MLE. The GMM criterion is **shape-only** — the level direction is projected out — so the
+published series pins dispersion, skewness and quantile spacing while the aggregate constraint
+pins the level; see `CLAUDE.md` for why that separation is load-bearing.
 
 ```bash
-# stage 1, mode mle — joint smoothed-constrained MLE over every (year, sex, age) cell, ≥1000 obs
+# stage 1 — joint solve over every (year, sex, age) cell with ≥1000 obs
 #           → cross_section_params_smoothed.csv, plus the raw stage-0 fits in cross_section_params.csv
-python code/cross_sections/estimate_cross_sections.py --mode mle [--jobs N] [--rho R] [--rho-steps S]
-# stage 1, mode mle-gmm — convex combination with the GKSW targets, weight lam
-#           → cross_section_params_guvgmm_smoothed.csv
-python code/cross_sections/estimate_cross_sections.py --mode mle-gmm [--lam L] [--gmm-iters K]
+python code/cross_sections/estimate_cross_sections.py [--lam L] [--jobs N] [--rho R] [--gmm-iters K]
 # stage 2 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
 python code/cross_sections/extrapolate_params.py
 
@@ -335,11 +335,11 @@ Its `g` is on a different **level** from the SMM modes — it absorbs the `E[u |
 term the SMM modes strip out — so it reports `eu_offset` per block, with
 `g0(ols) = g0(smm-mean) + eu_offset` exact. Slopes need no such correction.
 
-**Stage 1** (`--mode mle`, implemented in `crosssec_mle.py`) fits ~6.4k `(year, sex, age)` cells (single-year ages
+**Stage 1** (`estimate_cross_sections.py`) fits ~6.4k `(year, sex, age)` cells (single-year ages
 with ≥1000 positive-earnings observations; smaller cells skipped) in ~3 minutes: it pulls the data
 once per year and fits years in parallel (BLAS pinned to one thread per worker). Each cell uses
 **multi-start keep-best** — a warm start from the previous age and a robust cold start (the dPlN's
-moment + low/high-α seeds, the mixture's 6-point grid), keeping the lowest-`negll` converged fit.
+moment + low/high-α seeds, the mixture's weight×separation grid), keeping the lowest-`negll` converged fit.
 This matters because L-BFGS-B reports convergence at local optima too: under heavy top-censoring
 (mid-1950s, mid-1970s) the weakly-identified upper tail has a secondary basin that a single warm
 solve can fall into for a whole year, throwing off that year's aggregate. Each output row carries
@@ -391,7 +391,7 @@ likelihood is
 
 $$ L(\theta) = \Bigg[\prod_{i\in\text{interior}} f(y_i;\theta)\Bigg]\, F(t_{\text{lo}};\theta)^{\,n_{\text{lo}}}\,\big[1-F(t_{\text{hi}};\theta)\big]^{\,n_{\text{hi}}}. $$
 
-Taking logs gives the objective maximized in `crosssec_fit.py`:
+Taking logs gives the objective maximized in `obj_mle.py`:
 
 $$ \ell(\theta) = \sum_{i\in\text{interior}} \log f(y_i;\theta) \;+\; n_{\text{lo}}\,\log F(t_{\text{lo}};\theta) \;+\; n_{\text{hi}}\,\log\!\big[1-F(t_{\text{hi}};\theta)\big]. $$
 

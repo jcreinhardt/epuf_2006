@@ -10,7 +10,7 @@ broke the moment the plot scripts moved into plots/).
 
 Nothing here draws.  Contents:
 
-  nl_logpdf_s / nl_cdf_s   log-space Normal-Laplace density and cdf.  crosssec_fit's
+  nl_logpdf_s / nl_cdf_s   log-space Normal-Laplace density and cdf.  xs_model's
                            nl_cdf / nl_logpdf multiply phi(z) by a Mills ratio whose
                            erfcx overflows ~38 sd out, which the quadrature grid and
                            the bracket search do reach; these keep every term in logs.
@@ -34,9 +34,9 @@ import pandas as pd
 from scipy.optimize import brentq
 from scipy.special import erfcx, ndtr
 
-from crosssec_fit import mix_cdf, mix_logpdf, nl_cdf, nl_logpdf
+from xs_model import mix_cdf, mix_logpdf, nl_cdf, nl_logpdf
 
-# ---- log-space Normal-Laplace pdf/cdf. crosssec_fit's nl_cdf/nl_logpdf multiply
+# ---- log-space Normal-Laplace pdf/cdf. xs_model's nl_cdf/nl_logpdf multiply
 # phi(z) by a Mills ratio whose erfcx overflows ~38 sd out, which the quadrature grid
 # and bracket search do reach; these keep every term in logs and agree to ~1e-12 in the
 # mid-range (asserted at startup).
