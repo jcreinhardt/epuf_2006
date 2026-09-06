@@ -1,36 +1,27 @@
-"""Compare the re-estimated g(t) against the CMS (2024) lifecycle profiles.
+#!/usr/bin/env python
+"""Compare an estimated g(t) against the CMS (JF 2025) lifecycle profiles, coefficient by
+coefficient in CMS's own basis.
 
-Only cohorts observed over the FULL age span 25-55 are used, so every cubic is
-interpolating rather than extrapolating.
+CMS build their profiles by OLS per cohort x sex of the published GKSW meanlog on raw age,
+net of the SSA average wage (see gcohort_ols.py).  Their input is the same published moment
+this project targets: the male_3/female_3 sheets of gksw2017.xlsx reproduce the sel3 files
+to machine precision.  Two differences from a default run here:
 
-CMS ("Social Security and Trends in Wealth Inequality") build their profiles in
-`replication_repos/CMS/source/derived/lifecycle_income/create_lifecycle_income_parameters.do`
-from the same published GKSW moments this project targets: the `male_3`/`female_3`
-sheets of `gksw2017.xlsx` reproduce `cohortage_rwageinc_sel3_*` exactly (verified
-to machine precision), and `male_0` reproduces `sel0`.  Their estimator is a plain
-OLS per cohort x sex,
+  1. CMS use sel3 (lifetime earnings above a floor AND >= 15 years of work); the default
+     targets are sel0.  Pass a fit made with `--sel sel3` for the apples-to-apples check --
+     with --mode ols it reproduces CMS's coefficients to ~3e-7.
+  2. The SMM modes invert the moment through the GKOS process, so their g sits below the
+     observed moment by E[u | .]; the constant differs by that offset, the slopes compare.
 
-    log( cohort mean-log earnings / economy-wide average wage )  ~  age + age^2 + age^3
+The fitted g (raw-t basis, log 2013 dollars) is converted to CMS's basis exactly as CMS
+run their regression: subtract log of the average wage in the cell's calendar year, then
+project onto [1, age, age^2, age^3] over ages 25-55.  Only cohorts observed over the full
+span are drawn, so every polynomial interpolates.  Needs replication_repos/CMS.
 
-so their coefficients are on RAW age and their dependent variable is normalised by
-the SSA average wage, in 2013 dollars.  Two differences from this project's fit:
-
-  1. CMS use sel3 (lifetime earnings above a floor AND >= 15 years of work); the
-     estimation here targets sel0.  Pass --sel sel3 for the apples-to-apples run;
-     the printed summary reports how much the choice moves each coefficient.
-  2. CMS regress the observed moment directly.  This project inverts the moment
-     through the GKOS process, so its g is the deterministic profile that makes the
-     MODEL reproduce the moment after nonemployment and the Ymin censoring.
-
-To make the two comparable, the fitted g (log 2013 dollars, in t = (age-24)/10) is
-converted to the CMS basis: subtract log of the average wage in the cell's calendar
-year, then project onto [1, age, age^2, age^3] over ages 25-55 -- exactly the
-regression CMS run on their own input.
-
-Run from the project root:  python code/dynamics/plots/compare_g_cms.py [--sel sel0]
-Output: output/dynamics/g_vs_cms_{cons,age,age2,age3}.{pdf,png}
+Run from the project root:
+    python code/dynamics/plots/compare_g_cms.py [--fits output/dynamics/g_cohort_ols.csv]
+Output: output/dynamics/plots/g_vs_cms<tag>.{pdf,png}
 """
-
 import argparse
 import os
 import sys
@@ -42,29 +33,19 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, "code/dynamics")          # run from project root, per repo convention
+sys.path.insert(0, "code/dynamics")          # run from the project root, per repo convention
 import gcohort_model as E
+import gcohort_ols as O
 
-CMS = "replication_repos/CMS"
-CMS_COEF = f"{CMS}/datastore/derived/lifecycle_income/lifecycle_income_{{}}.dta"
-GKSW_XLSX = f"{CMS}/datastore/raw/lifecycle_income/orig/gksw2017.xlsx"
-OUT = "output/dynamics"
-
-PARAMS = [("cons", 3, "constant"), ("age", 0, "age"),
-          ("age2", 1, "age$^2$"), ("age3", 2, "age$^3$")]
-
-OURS = dict(color="#1f6fb4", marker="o", label="this fit (GKOS inversion)")
-THEIRS = dict(color="#d1642f", marker="s", label="CMS (OLS on GKSW)")
-
-
-def average_wage():
-    """SSA average earnings by year, thousands of 2013 dollars."""
-    d = pd.read_excel(GKSW_XLSX, "data_mean_2013d_impute")[["year", "ssa"]].dropna()
-    return dict(zip(d.year.astype(int), d.ssa.astype(float)))
+CMS_COEF = "replication_repos/CMS/datastore/derived/lifecycle_income/lifecycle_income_{}.dta"
+OUT = "output/dynamics/plots"
+PARAMS = [("cons", 3, "constant"), ("age", 0, "age"), ("age2", 1, "age$^2$"), ("age3", 2, "age$^3$")]
+OURS = dict(color="#1f6fb4", marker="o", label="this fit")
+THEIRS = dict(color="#d1642f", marker="s", label="CMS (OLS on GKSW sel3)")
 
 
 def cms_coefficients():
-    """{(sex, cohort): [b_age, b_age2, b_age3, cons]}."""
+    """{(sex, cohort): [b_age, b_age2, b_age3, cons]} -- CMS's own column order."""
     out = {}
     for sex in ("male", "female"):
         d = pd.read_stata(CMS_COEF.format(sex))
@@ -73,88 +54,57 @@ def cms_coefficients():
     return out
 
 
-def to_cms_basis(coef_raw_t, cohort, awi):
-    """Fitted g (log dollars, raw-t basis) -> CMS's [age, age^2, age^3, cons]."""
-    ages = E.AGES
-    t = (ages - 24) / 10.0
-    g = sum(coef_raw_t[k] * t**k for k in range(4))
-    rel = g - np.log(1000.0 * np.array([awi[cohort + a - 25] for a in ages]))
-    X = np.column_stack([np.ones_like(ages, float), ages, ages**2.0, ages**3.0])
-    b = np.linalg.lstsq(X, rel, rcond=None)[0]
+def to_cms_basis(coef_raw, cohort, awi):
+    """Fitted g (raw-t basis) -> CMS's [age, age^2, age^3, cons] over ages 25-55."""
+    g = E.basis(E.T, 3) @ E.pad(coef_raw)
+    rel = g - np.log(1000.0 * np.array([awi[cohort + a - 25] for a in E.AGES]))
+    b = O.cms_basis(rel, E.AGES)
     return np.array([b[1], b[2], b[3], b[0]])
-
-
-def fit_all(sel, tables, awi):
-    """{(sex, cohort): CMS-basis coefficients} for full-coverage cohorts only."""
-    out = {}
-    for sexcode, label in ((0, "female"), (1, "male")):
-        tgt = E.load_targets(sexcode, sel)
-        for c in sorted({c for c, _ in tgt}):
-            ages = np.array(sorted(a for cc, a in tgt if cc == c))
-            if ages.size != E.AGES.size:
-                continue
-            jj = ages - E.AGES[0]
-            logymin = np.log([E.ymin(c + a - 25) for a in ages])
-            target = np.array([tgt[(c, a)][0] for a in ages])
-            coef, _ = E.fit_block(jj, logymin, target, tables, E.G_START)
-            out[(label, c)] = to_cms_basis(E.uncentre(coef), c, awi)
-    return out
-
-
-def panel(ax, cohorts, ours, theirs, title):
-    ax.plot(cohorts, ours, lw=1.3, ms=4, mfc="none", **OURS)
-    ax.plot(cohorts, theirs, lw=1.3, ms=4, mfc="none", **THEIRS)
-    ax.set_title(title, fontsize=10)
-    ax.set_xlabel("cohort (year at age 25)", fontsize=9)
-    ax.tick_params(labelsize=8)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=200_000)
-    ap.add_argument("--sel", default="sel0", help="sel0 (default) or sel3 (CMS's sample)")
-    ap.add_argument("--seed", type=int, default=20260821)
-    ap.add_argument("--outdir", default=OUT, help="where to write the figures")
+    ap.add_argument("--fits", default="output/dynamics/g_cohort_ols.csv")
+    ap.add_argument("--outdir", default=OUT)
+    ap.add_argument("--tag", default="")
     args = ap.parse_args()
+    os.makedirs(args.outdir, exist_ok=True)
 
-    outdir = args.outdir
-    os.makedirs(outdir, exist_ok=True)
-    awi = average_wage()
-    cms = cms_coefficients()
-    print(f"simulating {args.n:,} individuals ...")
-    tables = E.suffix_tables(E.simulate_u(np.random.default_rng(args.seed), args.n))
-
-    fits = {s: fit_all(s, tables, awi) for s in ("sel0", "sel3")}
-    ours = fits[args.sel]
-    cohorts = sorted({c for (_, c) in ours if ("male", c) in cms})
-    print(f"full-coverage cohorts in both sources: {cohorts[0]}-{cohorts[-1]} "
+    awi, cms = O.average_wage(), cms_coefficients()
+    fits = pd.read_csv(args.fits)
+    fits = fits[fits["n_ages"] == E.AGES.size]
+    ours = {(r.sex, int(r.cohort)): to_cms_basis([r.g0_raw, r.g1_raw, r.g2_raw, r.g3_raw],
+                                                  int(r.cohort), awi)
+            for r in fits.itertuples()}
+    cohorts = sorted({c for (s, c) in ours if (s, c) in cms and s == "male"})
+    print(f"{args.fits}: full-span cohorts in both sources {cohorts[0]}-{cohorts[-1]} "
           f"({len(cohorts)} cohorts)")
 
-    for name, idx, _ in PARAMS:
-        a = np.array([fits["sel0"][("male", c)][idx] for c in cohorts])
-        b = np.array([fits["sel3"][("male", c)][idx] for c in cohorts])
-        d = np.array([cms[("male", c)][idx] for c in cohorts])
-        print(f"  men, {name:5s}: |sel0-sel3| {np.abs(a - b).mean():.3e}   "
-              f"|sel0-CMS| {np.abs(a - d).mean():.3e}   "
-              f"|sel3-CMS| {np.abs(b - d).mean():.3e}")
-
-    for name, idx, pretty in PARAMS:
-        fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.0), sharex=True)
-        for ax, sex in zip(axes, ("male", "female")):
-            panel(ax, cohorts,
-                  [ours[(sex, c)][idx] for c in cohorts],
-                  [cms[(sex, c)][idx] for c in cohorts],
-                  f"{'Men' if sex == 'male' else 'Women'}")
-        axes[1].legend(frameon=False, fontsize=8)
-        fig.suptitle(f"coefficient on {pretty}   \u2014   targets: {args.sel}",
-                     fontsize=10)
-        fig.tight_layout()
-        for ext in ("pdf", "png"):
-            fig.savefig(f"{outdir}/g_vs_cms_{name}.{ext}", dpi=200)
-        plt.close(fig)
-    print(f"wrote {outdir}/g_vs_cms_{{cons,age,age2,age3}}.pdf/.png")
+    fig, axes = plt.subplots(4, 2, figsize=(8.0, 9.5), sharex=True)
+    for i, (name, idx, pretty) in enumerate(PARAMS):
+        for j, sex in enumerate(("male", "female")):
+            a = np.array([ours[(sex, c)][idx] for c in cohorts])
+            b = np.array([cms[(sex, c)][idx] for c in cohorts])
+            print(f"  {sex:6s} {name:5s}: mean |this - CMS| {np.abs(a - b).mean():.3e}")
+            ax = axes[i, j]
+            ax.plot(cohorts, a, lw=1.3, ms=4, mfc="none", **OURS)
+            ax.plot(cohorts, b, lw=1.3, ms=4, mfc="none", **THEIRS)
+            if i == 0:
+                ax.set_title("Men" if sex == "male" else "Women", fontsize=10)
+            if j == 0:
+                ax.set_ylabel(f"coefficient on {pretty}", fontsize=9)
+            if i == 3:
+                ax.set_xlabel("cohort (year at age 25)", fontsize=9)
+            ax.tick_params(labelsize=8)
+            for side in ("top", "right"):
+                ax.spines[side].set_visible(False)
+    axes[0, 1].legend(frameon=False, fontsize=8)
+    fig.suptitle(f"g(t) in CMS's basis: {os.path.basename(args.fits)} vs CMS", fontsize=10)
+    fig.tight_layout()
+    path = os.path.join(args.outdir, f"g_vs_cms{args.tag}")
+    for ext in ("pdf", "png"):
+        fig.savefig(f"{path}.{ext}", dpi=200)
+    print(f"wrote {path}.pdf/.png")
 
 
 if __name__ == "__main__":

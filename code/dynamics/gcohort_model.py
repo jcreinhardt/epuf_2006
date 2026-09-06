@@ -1,153 +1,182 @@
-"""Re-estimate the GKOS (2021) lifecycle profile g(t) as a cohort x sex cubic.
+"""The GKOS (2021) benchmark earnings process with a cohort x sex lifecycle profile.
 
-Every other parameter of the benchmark process (Table IV spec 6 + Table D.III) is
-held FIXED at the published estimate; only the four coefficients of
+Every parameter of the benchmark process (Table IV spec 6 + Table D.III) is held FIXED at
+the published estimate; only the coefficients of
 
     g(t) = g0 + g1*t + g2*t^2 + g3*t^3,      t = (age - 24)/10
 
-are searched over, separately for each (sex, cohort) block.  The target is the
-published mean of log real wage income by cohort x age,
+are estimated, separately per (sex, cohort) block, against the published cohort x age
+moment files in raw_data/guv_quantiles/ (see `load_moments`).  This module is the LIBRARY
+shared by the estimators (gcohort_ols.py, gcohort_smm.py), the extrapolation and every
+figure script: the process, its simulation, the suffix tables that make the moment map
+O(log n), and the polynomial bookkeeping.  It draws nothing and has no CLI.
 
-    raw_data/guv_quantiles/cohortage_rwageinc_sel0_25_55_sex{0,1}.txt
+The process (paper eq. 2-8), with u the g-free part of log earnings:
 
-whose `meanlog` column is built in the GKOS replication package by
-`Appendix/DoFiles/AppendixD-DoFiles/cohortage_16mar2016_1pc.do` as
+    log Y = g(t) + u,   u = log(1 - nu) + alpha + beta*t + z + eps
 
-    keep if rwageinc >= 0.5*rminwg*520 & rwageinc ~= .   <- the censoring
-    by cohort age: egen meanlog = mean(log(rwageinc))
+    z_t = rho z_{t-1} + eta_t         eta ~ two-normal mixture, mean zero
+    eps ~ two-normal mixture, mean zero
+    (alpha, beta) ~ bivariate normal   (heterogeneous income profiles)
+    nu = 1 w.p. p_nu(t, z) = logit(a + b t + c z + d t z), else 0   (lambda = 1e-4 makes
+        every nonemployment spell a full year, so u = -inf and the observation is a zero)
 
-i.e. the mean of log earnings CONDITIONAL on clearing a quarter of full-time work
-(13 weeks x 40 hours = 520 hours) at half the legal minimum wage, in 2013 dollars.
-Cohort is indexed by the calendar year at age 25 (`cohort = yob + 25`), so
+The published target is the mean (and percentiles, sd, skew, kurt) of log real wage income
+by cohort x age CONDITIONAL on the GKSW screen Y >= Ymin (a quarter of full-time work at half
+the minimum wage, `guv_targets.sel0_threshold`).  Because g enters before the screen, the
+sample rule is u >= log(Ymin) - g(t), so every model moment is a functional of the single
+scalar cut c = log(Ymin) - g(t) applied to the age-t distribution of u:
 
-    year = cohort + (age - 25),
+    meanlog = g(t) + E[u | u >= c],   log p_q = g(t) + Q_q(u | u >= c),   sd/skew/kurt of (u | u >= c)
 
-which is why each cohort's cubic is estimated on its own diagonal of the APC plane.
+One simulated panel therefore suffices: sort u within each age once, keep suffix sums, and
+each objective evaluation is a binary search.  MEASURED: at the GKOS parameters the cut is
+nearly non-binding among positive earners (max censored share ~0.001) because the
+nonemployment shock puts the low mass at exactly zero, so dm/dg ~ 1.000 for every level
+moment and ~0 for the shape moments -- the shape moments cannot identify g.
 
-The estimator exploits the fact that g enters the level multiplicatively, before
-the censoring.  Writing u = log(1-nu) + alpha + beta*t + z + eps for the g-free
-part of log earnings, log Y = g(t) + u and the sample rule Y >= Ymin becomes
-u >= log(Ymin) - g(t).  So the model moment is
+Cohort is indexed by the calendar year at age 25 (`cohort = yob + 25`, GKSW's convention),
+so year = cohort + age - 25 and each block is one diagonal of the APC plane.  The cubic is
+estimated in t centred on age 40 (`T_CENTRE`), so g0 is the well-determined mid-career level;
+`uncentre` recovers raw-t coefficients, which the CSVs carry as g*_raw.
 
-    m(g; t, year) = g(t) + E[ u | u >= log(Ymin_year) - g(t) ],
-
-a function of the single scalar log(Ymin) - g(t) once the age-t distribution of u
-is drawn.  One simulated panel is therefore enough: sort u within each age, take
-suffix means, and every objective evaluation is a binary search.  m is strictly
-increasing in g(t) (dm/dg lies in (0,1)), so each block is a well-behaved fit.
-
-MEASURED: at the GKOS parameters the censoring turns out to be almost non-binding
-*among positive earners* -- the reported max censored share is ~0.001 -- because
-the nonemployment shock puts the entire low-earnings mass at exactly zero rather
-than just above Ymin (cf. the paper's footnote 22: a $50,000 earner needs a -350
-log point shock to fall below Ymin).  So dm/dg is ~1.000 in practice and the fit
-is effectively least squares of meanlog on the cubic basis, shifted by E[u].  The
-truncation machinery is still implemented exactly, but it does little work here,
-which also means the estimates are insensitive to the Ymin construction.
-
-CAVEAT: GKOS estimate on men only.  sex0 is FEMALE and sex1 is MALE in the source
-do-file, and this script applies the male parameter vector to both, so the female
-cubic absorbs every sex difference in dispersion and nonemployment risk on top of
-the age profile.  Read g_female as a descriptive profile, not a structural one.
-
-Run from the project root:
-    python code/dynamics/estimate_g_cohort.py --mode smm-mean   (this module is the library)
-Output: output/dynamics/g_cohort_cubic.csv, output/dynamics/g_cohort_fit.{pdf,png}
+TWO CAVEATS.  (1) GKOS estimate on men only; guv sex0 is FEMALE and sex1 MALE, and the male
+parameter vector is applied to both, so g_female absorbs every sex difference in dispersion
+and nonemployment risk on top of the age profile -- read it as descriptive.  (2) The HIP
+slope: Table IV reports sigma_beta = 0.196 ON THE DECADE-SCALED t, i.e. ~2% per year of age
+(the paper's own gloss, matching Guvenen 2009).  CMS's Simulation.m uses 0.196/10 on the same
+t, and an earlier version of this module copied that.  It leaves mean log earnings -- and so
+every g estimate -- untouched (E[u] does not depend on sigma_beta), but it understates the
+dispersion of log earnings past age 40 and the mean LEVEL E[e^u] by 12% at age 40 and 36% at
+55, which is what the aggregate-earnings validation runs on.
 """
-
-import argparse
-import os
+import sys
 
 import numpy as np
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 
-TARGET_DIR = "raw_data/guv_quantiles"
-OUT = "output/dynamics"
+sys.path.insert(0, "code/cross_sections")    # run from the project root, per repo convention
+from guv_targets import (BASE_YEAR, GUV_DIR, FUNCTIONALS, QUANTS, _PCE_GKSW,   # noqa: E402
+                         sel0_threshold)
 
 # --- GKOS benchmark parameters (Table IV spec 6; Table D.III) -----------------
-# Identical to code/dynamics/simulate_gkos_ordinal.py.
 RHO = 0.959
 P_Z, MU_Z1, SIG_Z1, SIG_Z2 = 0.407, -0.085, 0.364, 0.069
 MU_Z2 = -P_Z * MU_Z1 / (1 - P_Z)
 SIG_Z0 = 0.714
 P_E, MU_E1, SIG_E1, SIG_E2 = 0.130, 0.271, 0.285, 0.037
 MU_E2 = -P_E * MU_E1 / (1 - P_E)
-SIG_A, SIG_B, CORR_AB = 0.300, 0.196 / 10, 0.768
+SIG_A, SIG_B, CORR_AB = 0.300, 0.196, 0.768      # sigma_beta per DECADE of age (t units)
 LAMBDA = 0.0001
 NU_A, NU_B, NU_C, NU_D = -3.353, -0.859, -5.034, -2.895
+G_GKOS = np.array([2.581, 0.812, -0.185, 0.0])   # their g(t) on raw t, in thousands of dollars
 
-# GKOS's own quadratic, shifted by log(1000) because the process is calibrated in
-# thousands of dollars while the targets are in dollars.  Used only as a start value.
-G_START = np.array([2.581 + np.log(1000.0) + 0.812 * 1.6 - 0.185 * 1.6**2,
-                    0.812 - 2 * 0.185 * 1.6, -0.185, 0.0])
-
-AGES = np.arange(25, 56)                      # 25..55, the span of the targets
-T = (AGES - 24) / 10.0
-# The cubic is estimated in t centred on age 40, so g0 is the (well-determined)
-# level at mid-career rather than an extrapolation back to age 24.  Raw-t
-# coefficients are recovered exactly by `uncentre` and reported alongside.
+# --- age bookkeeping ------------------------------------------------------------
+AGES = np.arange(25, 56)                          # the span of the published targets
 T_CENTRE = (40 - 24) / 10.0
 
-# --- Deflator and minimum wage ------------------------------------------------
-# Verbatim from replication_repos/GKOS_2022/DoFiles/merge_reshape_06jan2016_1pc.do.
-# PCE price index, 1947-2014; base_price=67 -> 2013 dollars.
-PCE_FIRST_YEAR = 1947
-PCE = np.array([
-    13.325, 14.079, 13.969, 14.136, 15.098, 15.408, 15.613, 15.746, 15.810, 16.126, 16.616,
-    17.007, 17.262, 17.546, 17.730, 17.939, 18.149, 18.414, 18.681, 19.155, 19.637, 20.402,
-    21.327, 22.325, 23.274, 24.070, 25.368, 28.009, 30.348, 32.013, 34.091, 36.479, 39.714,
-    43.978, 47.908, 50.553, 52.729, 54.724, 56.661, 57.887, 59.650, 61.974, 64.642, 67.440,
-    69.653, 71.494, 73.279, 74.803, 76.356, 77.981, 79.327, 79.935, 81.110, 83.132, 84.736,
-    85.874, 87.572, 89.703, 92.261, 94.729, 97.101, 100.065, 100.000, 101.653, 104.149,
-    106.121, 107.572, 109.105])
-# Nominal federal minimum wage, 1947-2013.
-MINWG = np.array([
-    0.40, 0.40, 0.40, 0.40, 0.75, 0.75, 0.75, 0.75, 0.75, 1.00, 1.00, 1.00, 1.00, 1.00,
-    1.00, 1.15, 1.15, 1.25, 1.25, 1.25, 1.25, 1.40, 1.60, 1.60, 1.60, 1.60, 1.60, 1.60,
-    2.00, 2.10, 2.10, 2.30, 2.65, 2.90, 3.10, 3.35, 3.35, 3.35, 3.35, 3.35, 3.35, 3.35,
-    3.35, 3.35, 3.80, 4.25, 4.25, 4.25, 4.25, 4.25, 4.75, 5.15, 5.15, 5.15, 5.15, 5.15,
-    5.15, 5.15, 5.15, 5.15, 5.15, 5.85, 6.55, 7.25, 7.25, 7.25, 7.25])
-BASE_YEAR = 2013
-HOURS = 520.0                                 # 13 weeks x 40 hours
-MINWG_FRAC = 0.5                              # half the legal minimum wage
+
+def tt(age):
+    """Normalised age t = (age - 24)/10."""
+    return (np.asarray(age, float) - 24.0) / 10.0
+
+
+T = tt(AGES)
+TC = T - T_CENTRE                                 # centred t at the target ages
+
+
+def pad(coef):
+    """Any-degree coefficient vector padded out to the cubic layout (trailing zeros)."""
+    c = np.asarray(coef, float)
+    return np.concatenate([c, np.zeros(4 - c.size)]) if c.size < 4 else c
+
+
+def basis(tc, degree):
+    """[1, tc, tc^2, ...] as a (len(tc), degree+1) design matrix."""
+    return np.vander(np.atleast_1d(np.asarray(tc, float)), degree + 1, increasing=True)
+
+
+def gpoly(coef, tc):
+    """g at centred t (scalar or vector), for a coefficient vector of any degree <= 3."""
+    g = basis(tc, 3) @ pad(coef)
+    return g[0] if np.ndim(tc) == 0 else g
+
+
+_m = T_CENTRE
+UNCENTRE = np.array([[1, -_m, _m**2, -_m**3], [0, 1, -2 * _m, 3 * _m**2],
+                     [0, 0, 1, -3 * _m], [0, 0, 0, 1]], float)
+
+
+def uncentre(coef):
+    """Coefficients on raw t from coefficients on (t - T_CENTRE); exact and linear, so the
+    delta method on UNCENTRE is exact too."""
+    return UNCENTRE @ pad(coef)
+
+
+def centre(coef_raw):
+    return np.linalg.solve(UNCENTRE, pad(coef_raw))
+
+
+# Start value: GKOS's own quadratic, shifted by log(1000) because their process is in
+# thousands of dollars and the targets are in dollars.
+G_START = centre(G_GKOS + np.array([np.log(1000.0), 0, 0, 0]))
+
+
+# --- deflator and screen: ONE definition, in guv_targets ------------------------
+
+def pce(year):
+    """GKSW's PCE vintage (2009 = 100), 1947-2014 -- the one the target files were deflated
+    with, so it is the one that turns their BASE_YEAR dollars back into nominal."""
+    return _PCE_GKSW[year - 1947]
 
 
 def ymin(year):
-    """Annual earnings floor in BASE_YEAR dollars, as imposed in the do-file."""
-    if not PCE_FIRST_YEAR <= year <= PCE_FIRST_YEAR + MINWG.size - 1:
-        raise ValueError(f"year {year} outside the deflator/minimum-wage tables")
-    i = year - PCE_FIRST_YEAR
-    rminwg = MINWG[i] * PCE[BASE_YEAR - PCE_FIRST_YEAR] / PCE[i]
-    return MINWG_FRAC * rminwg * HOURS
+    """The GKSW screen in BASE_YEAR dollars: 0.5 x 520 h x minimum wage, deflated."""
+    return sel0_threshold(year) * pce(BASE_YEAR) / pce(year)
 
 
-# --- Targets ------------------------------------------------------------------
-
-def load_targets(sex, sel):
-    """(cohort, age) -> (meanlog, sdlog).  Only meanlog is targeted; sdlog is
-    carried along as an untargeted check on the fixed dispersion parameters."""
-    path = f"{TARGET_DIR}/cohortage_rwageinc_{sel}_25_55_sex{sex}.txt"
-    raw = np.genfromtxt(path, skip_header=1, usecols=(0, 1, 2, 3))
-    return {(int(c), int(a)): (m, sd) for c, a, m, sd in raw}
+# --- targets ----------------------------------------------------------------------
+MOMENTS = list(FUNCTIONALS)     # meanlog sdlog skewlog kurtlog p10 p25 p50 p75 p90 p98
+QS = np.array(QUANTS)
+SEXES = (("female", 0), ("male", 1))              # our label -> guv file suffix
 
 
-# --- Simulation of the g-free part of log earnings ----------------------------
+def load_moments(label, sel):
+    """(cohort, age) -> the length-10 published moment vector, percentiles in logs so every
+    entry is in log points."""
+    code = dict(SEXES)[label]
+    raw = np.genfromtxt(GUV_DIR / f"cohortage_rwageinc_{sel}_25_55_sex{code}.txt",
+                        skip_header=1)
+    out = {}
+    for row in raw:
+        m = row[2:12].copy()
+        m[4:] = np.log(m[4:])
+        out[(int(row[0]), int(row[1]))] = m
+    return out
+
+
+def blocks(sel, min_ages):
+    """Every (label, cohort, ages, target[n_ages x 10]) block with >= min_ages observed ages.
+    A cubic fitted to a short arc extrapolates wildly outside it, so the default keeps only
+    the full 25-55 span (cohorts 1957-1983)."""
+    for label, _ in SEXES:
+        tgt = load_moments(label, sel)
+        for c in sorted({c for c, _ in tgt}):
+            ages = np.array(sorted(a for cc, a in tgt if cc == c))
+            if ages.size >= min_ages:
+                yield label, c, ages, np.array([tgt[(c, a)] for a in ages])
+
+
+def logymin(cohort, ages):
+    return np.log([ymin(cohort + a - 25) for a in ages])
+
+
+# --- simulation of the g-free part of log earnings -------------------------------
 
 def entry_sd(age0):
-    """sd of z at `age0` such that sd(z) at age 25 is still GKOS's SIG_Z0.
-
-    SIG_Z0 is the dispersion of the persistent component at LABOUR-MARKET ENTRY, which
-    GKOS place at age 25; the AR(1) has no backward form, so starting the panel earlier
-    needs the initial condition solved rather than reused.  Requiring the age-25 variance
-    to come out at SIG_Z0^2 leaves everything downstream on GKOS's calibration and makes
-    z's dispersion GROW from entry to 25 (0.613 -> 0.714 at age 20), which is the right
-    direction.  Ages before 25 are still outside the estimation sample -- the HIP slope
-    and the nonemployment logit are extrapolated there too.
-    """
+    """sd of z at `age0` such that sd(z) at age 25 is still SIG_Z0.  GKOS place labour-market
+    entry at 25 and the AR(1) has no backward form, so a panel started earlier needs the
+    initial condition solved: z's dispersion then GROWS from entry to 25 (0.61 at age 20)."""
     if age0 >= 25:
         return SIG_Z0
     ve = P_Z * (MU_Z1**2 + SIG_Z1**2) + (1 - P_Z) * (MU_Z2**2 + SIG_Z2**2)
@@ -158,26 +187,20 @@ def entry_sd(age0):
     return float(np.sqrt(v0))
 
 
-def simulate_u(rng, n, ages=None):
-    """u[i, j] = log(1 - nu) + alpha + beta*t + z + eps at age ages[j] (default AGES).
-
-    Full-year nonemployment (nu == 1) yields zero earnings, which can never clear
-    Ymin, so those draws are recorded as -inf and dropped from the sorted arrays.
-    """
-    ages = AGES if ages is None else np.asarray(ages)
-    tt = (ages - 24) / 10.0
+def simulate_u(rng, n, ages=AGES):
+    """u[i, j] = log(1 - nu) + alpha + beta*t + z + eps at ages[j]; -inf for a full-year
+    nonemployment spell (zero earnings, which can never clear the screen)."""
+    ages = np.asarray(ages)
     cov = CORR_AB * SIG_A * SIG_B
     ab = rng.multivariate_normal([0, 0], [[SIG_A**2, cov], [cov, SIG_B**2]], n)
     alpha, beta = ab[:, 0], ab[:, 1]
-
     u = np.empty((n, ages.size))
     z = entry_sd(int(ages[0])) * rng.standard_normal(n)
-    for j, t in enumerate(tt):
+    for j, t in enumerate(tt(ages)):
         if j > 0:
             pick = rng.random(n) < P_Z
-            eta = np.where(pick, MU_Z1 + SIG_Z1 * rng.standard_normal(n),
-                           MU_Z2 + SIG_Z2 * rng.standard_normal(n))
-            z = RHO * z + eta
+            z = RHO * z + np.where(pick, MU_Z1 + SIG_Z1 * rng.standard_normal(n),
+                                   MU_Z2 + SIG_Z2 * rng.standard_normal(n))
         pick = rng.random(n) < P_E
         eps = np.where(pick, MU_E1 + SIG_E1 * rng.standard_normal(n),
                        MU_E2 + SIG_E2 * rng.standard_normal(n))
@@ -189,20 +212,20 @@ def simulate_u(rng, n, ages=None):
     return u
 
 
-def suffix_tables(u):
-    """Per age: sorted finite u with suffix sums of u and u^2, for O(log n)
-    truncated means and standard deviations."""
+def suffix_tables(u, order=2):
+    """Per age: (sorted finite u, suffix sums of u^1..u^order).  Order 2 serves the truncated
+    mean and sd; the SMM shape moments need 4."""
     tables = []
     for j in range(u.shape[1]):
         v = np.sort(u[np.isfinite(u[:, j]), j])
-        s1 = np.concatenate([np.cumsum(v[::-1])[::-1], [0.0]])
-        s2 = np.concatenate([np.cumsum((v**2)[::-1])[::-1], [0.0]])
-        tables.append((v, s1, s2))
+        sums = [np.concatenate([np.cumsum((v**k)[::-1])[::-1], [0.0]])
+                for k in range(1, order + 1)]
+        tables.append((v, *sums))
     return tables
 
 
 def _tail(table, cut):
-    v, s1, s2 = table
+    v, s1, s2 = table[:3]
     k = np.searchsorted(v, cut, side="left")
     return v, s1, s2, k, v.size - k
 
@@ -214,85 +237,28 @@ def cond_mean(table, cut):
 
 
 def cond_sd(table, cut):
-    """sd(u | u >= cut); log Y and u differ by a constant, so this is sd(log Y)."""
-    v, s1, s2, k, m = _tail(table, cut)
-    if m <= 1:
-        return np.nan
-    return np.sqrt(max(s2[k] / m - (s1[k] / m) ** 2, 0.0))
+    """sd(u | u >= cut) = sd(log Y | Y >= Ymin), since the two differ by a constant."""
+    _, s1, s2, k, m = _tail(table, cut)
+    return np.nan if m <= 1 else np.sqrt(max(s2[k] / m - (s1[k] / m) ** 2, 0.0))
 
 
 def censored_share(table, cut):
-    """Share of the positive-earnings draws that fall below the Ymin cut."""
+    """Share of the positive-earnings draws that fall below the cut."""
     v, _, _, k, _ = _tail(table, cut)
     return k / v.size
 
 
-# --- One (sex, cohort) block --------------------------------------------------
+# --- the mean-only fit (start value for SMM; the OLS bridge) -----------------------
 
-def uncentre(coef):
-    """Coefficients on raw t, given coefficients on (t - T_CENTRE)."""
-    a, m = coef, T_CENTRE
-    return np.array([a[0] - a[1] * m + a[2] * m**2 - a[3] * m**3,
-                     a[1] - 2 * a[2] * m + 3 * a[3] * m**2,
-                     a[2] - 3 * a[3] * m,
-                     a[3]])
+def model_meanlog(coef, jj, logym, tables):
+    """m(g) = g(t) + E[u | u >= log(Ymin) - g(t)] at the age indices jj."""
+    g = gpoly(coef, TC[jj])
+    return np.array([gi + cond_mean(tables[j], ci - gi) for j, gi, ci in zip(jj, g, logym)])
 
 
-def pad(coef):
-    """Any-degree coefficient vector padded out to the cubic layout (trailing zeros)."""
-    c = np.asarray(coef, float)
-    return np.concatenate([c, np.zeros(4 - c.size)]) if c.size < 4 else c
-
-
-def model_meanlog(coef, jj, logymin, tables):
-    """m(g) = g(t) + E[u | u >= log(Ymin) - g(t)] at each requested age index."""
-    c = pad(coef)
-    tt = T[jj] - T_CENTRE
-    g = c[0] + c[1] * tt + c[2] * tt**2 + c[3] * tt**3
-    return np.array([gi + cond_mean(tables[j], ci - gi)
-                     for j, gi, ci in zip(jj, g, logymin)])
-
-
-def fit_block(jj, logymin, target, tables, start, degree=3):
-    """Least squares over the first `degree`+1 coefficients; the rest stay zero, so a
-    quadratic is written out in the same 4-column layout with g3 = 0."""
-    res = least_squares(lambda c: model_meanlog(c, jj, logymin, tables) - target,
+def fit_block(jj, logym, target, tables, start=G_START, degree=3):
+    """Least squares of the published meanlog on the model moment over the first degree+1
+    coefficients; the rest stay zero so every fit shares the 4-column layout."""
+    res = least_squares(lambda c: model_meanlog(c, jj, logym, tables) - target,
                         pad(start)[:degree + 1], method="lm", xtol=1e-12, ftol=1e-12)
     return pad(res.x), res.fun
-
-
-def plot(rows, fits, tag=""):
-    full = [c for (s, c) in fits if s == "male" and fits[(s, c)][0].size == 31]
-    show = [full[0], full[len(full) // 2], full[-1]] if full else []
-    fig, axes = plt.subplots(1, 3, figsize=(11, 3.3))
-
-    ax = axes[0]
-    for label, color in (("female", "#c1554d"), ("male", "#2f6f9f")):
-        for c in show:
-            if (label, c) in fits:
-                a, d, m = fits[(label, c)]
-                ax.plot(a, d, color=color, lw=1.6)
-                ax.plot(a, m, color=color, lw=1.4, ls=(0, (2, 2)))
-    ax.set_title("mean log earnings: data (solid) vs fit (dashed)")
-    ax.set_xlabel("age")
-
-    full_lo, full_hi = (min(full), max(full)) if full else (None, None)
-
-    for k, (i, name) in enumerate(((4, "g1 (linear)"), (5, "g2 (quadratic)"))):
-        ax = axes[k + 1]
-        for label, color in (("female", "#c1554d"), ("male", "#2f6f9f")):
-            sel = [(r[1], r[i]) for r in rows if r[0] == label]
-            ax.plot([x for x, _ in sel], [y for _, y in sel], color=color, lw=1.5,
-                    label=label)
-        ax.set_title(name + " coefficient by cohort")
-        ax.set_xlabel("cohort (year at age 25)")
-        ax.axhline(0, color="0.7", lw=0.8)
-        # outside this band the cohort is observed over part of the age span only,
-        # and the cubic is extrapolating rather than interpolating
-        if full_lo is not None and full_lo != full_hi:
-            ax.axvspan(full_lo, full_hi, color="0.9", zorder=0)
-    axes[2].legend(frameon=False)
-    fig.tight_layout()
-    for ext in ("pdf", "png"):
-        fig.savefig(f"{OUT}/g_cohort_fit{tag}.{ext}", dpi=200)
-    print(f"wrote {OUT}/g_cohort_fit{tag}.pdf/.png")

@@ -10,9 +10,12 @@ log earnings, then simulate
             - var(z)/2 - var(alpha + beta*t)/2 - var(e)/2        (their Jensen term)
 
 Everything here mirrors source/derived/simulation/{Simulation,IncomeShockFun}.m in the
-replication package: the same GKOS parameters, the same cross-sectionally-evaluated
-variance terms, the same 10%/20% never-work shares, and the same state-dependent
-unemployment logit.
+replication package: the same GKOS parameters AS CMS CODED THEM -- including their
+SigBeta = 0.196/10 on the decade-scaled age (a tenth of GKOS's Table IV value; see
+gcohort_model.py) and CorrAlphaBeta = 0.786 (Table IV: 0.768) -- the same cross-sectionally
+evaluated variance terms, the same 10%/20% never-work shares, and the same state-dependent
+unemployment logit.  It deliberately does NOT import gcohort_model: the point is CMS's
+process as run, not the corrected one.
 
 THE POINT: Unemployed is drawn with probability logit(a + b t + c z + d z t), c = -5.034,
 so nonemployment falls on LOW-z workers. Conditioning on positive earnings therefore
@@ -20,9 +23,11 @@ selects on the persistent component, and E[log Y | observed] sits ABOVE gtilde b
 selection term -- a wedge no level correction can remove, because gtilde is a LATENT
 profile while the data moment is measured on survivors.
 
-Run from the project root:  python code/dynamics/simulate_cms_selection.py
-Output: output/dynamics/cms_selection_bias.{pdf,png}
+Run from the project root:  python code/dynamics/plots/plot_cms_selection.py
+Output: output/dynamics/plots/cms_selection_bias.{pdf,png}
 """
+import os
+
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -30,10 +35,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-OUT = "output/dynamics"
+OUT = "output/dynamics/plots"
 LIFECYCLE = "replication_repos/CMS/datastore/derived/lifecycle_income"
 
-# --- GKOS parameters, verbatim from Simulation.m -----------------------------
+# --- GKOS parameters, verbatim from CMS's Simulation.m (see docstring) --------------
 RHO_Z = 0.959
 PROB_Z, MU_Z1, SIG_Z1, SIG_Z2 = 0.407, -0.085, 0.364, 0.069
 SIG_Z = 0.714                                   # sd of the initial z draw
@@ -120,6 +125,7 @@ def simulate(sex, rng):
 
 
 def main():
+    os.makedirs(OUT, exist_ok=True)
     rng = np.random.default_rng(5)
     g, obs = simulate(SEX, rng)
     ages_raw, y_raw = gksw_points()

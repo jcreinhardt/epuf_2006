@@ -77,29 +77,40 @@ python code/cross_sections/plots/plot_cross_section.py [age] [cohort] [sex] [--y
 
 ### Lifecycle profile g(t) — `code/dynamics/`
 
-**One entry point**, `estimate_g_cohort.py`, three estimators of the same cohort × sex cubic
-`g(t) = g0 + g1·t + g2·t² + g3·t³`, `t = (age−24)/10`, against the published GKSW cohort × age files:
+**One entry point**, `estimate_g_cohort.py`, three estimators of the same cohort × sex polynomial
+`g(t) = g0 + g1·t + g2·t² + g3·t³`, `t = (age−24)/10`, against the published GKSW cohort × age
+files, with every other GKOS parameter fixed (`gcohort_model.py` holds the process, its
+simulation, the suffix tables and the moment map; it draws nothing):
 
 ```bash
 python code/dynamics/estimate_g_cohort.py --mode ols             # gcohort_ols.py — CMS's per-block OLS
 python code/dynamics/estimate_g_cohort.py --mode smm-mean        # gcohort_smm.py — SMM on meanlog alone
 python code/dynamics/estimate_g_cohort.py --mode smm-quantiles   # gcohort_smm.py — meanlog + p10…p98
-python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_mean.csv
-python code/dynamics/plots/compare_g_cms.py [--sel sel0]
-python code/dynamics/plots/plot_agg_tax_dynamics.py [--fits CSV] [--ages 20 70]
+python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_mean.csv   # → *_extrapolated.csv
+python code/dynamics/plots/plot_g_cohort.py output/dynamics/g_cohort_*.csv     # coefficient paths, any CSVs overlaid
+python code/dynamics/plots/compare_g_cms.py [--fits CSV]                       # vs CMS's lifecycle_income_*.dta
+python code/dynamics/plots/plot_agg_tax_dynamics.py [--profiles CSV] [--ages 20 70]
 #   --export CSV writes the model aggregate for other figures to overlay;
 #   --renorm-comp is REQUIRED when exporting for plot_agg_tax_total.py (see below)
+python code/dynamics/plots/plot_cms_selection.py    # CMS's process as they coded it: selection wedge
+python code/dynamics/plots/plot_gkos_ordinal.py     # ordinal-transform invariance to g(t)
 ```
+
+Estimation writes CSVs to `output/dynamics/`; every figure goes to `output/dynamics/plots/`.
+**The extrapolation CSV is load-bearing**: `plot_agg_tax_dynamics.py` reads it (default
+`g_cohort_smm_quantiles_quad_extrapolated.csv`) rather than re-running the rule, so the
+`--anchor/--ref-age/--drift` choices made there are the ones the aggregate is validated with.
+Its default cohort range 1892–2105 is what a 1937–2100 × ages 20–70 window needs; the plot
+refuses a narrower file.
 
 **Putting the GKOS aggregate on the cross-section figure.** The two models reach aggregate
 taxable earnings by routes that share no parameters — the per-cell dPlN/mixture surface vs the
-GKOS lifecycle process with only g(t) free — so overlaying them is a real check. Three steps:
+GKOS lifecycle process with only g(t) free — so overlaying them is a real check. Four steps:
 
 ```bash
 python code/dynamics/estimate_g_cohort.py --mode smm-quantiles --degree 2 --jobs 8 --tag _quad
 python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_quantiles_quad.csv
 python code/dynamics/plots/plot_agg_tax_dynamics.py \
-    --fits output/dynamics/g_cohort_smm_quantiles_quad.csv --tag smmq_quad_2070 \
     --renorm-comp --export output/dynamics/agg_taxable_gkos_smmq_quad.csv
 python code/cross_sections/plots/plot_agg_tax_total.py \
     --gkos output/dynamics/agg_taxable_gkos_smmq_quad.csv
@@ -113,14 +124,43 @@ per-covered-worker over ALL ages, so dropping the un-renormalised series onto it
 window, both are "mean taxable earnings per covered worker × the published worker total" — at
 the cost of assuming workers outside 20–70 earn like the 20–70 average.
 
-Measured with the quadratic g(t) from SMM on mean + p10…p98: GKOS/benchmark is
-**0.992 [0.950–1.042]** in sample (1951–2006), 1.048 pre-EPUF, 1.032 over 2007–22, 1.047 on the
-TR projection. The parametric surface sits at 0.987 in sample, so the two agree to well under a
-percentage point despite sharing no parameters.
+**The HIP slope is σ_β = 0.196 per DECADE of age, and getting it wrong is invisible in the
+mean-only fit.** Table IV's 0.196 is on the same `t = (age−24)/10` as g(t) (Table D.III's note;
+the paper's own gloss "σ_β ≃ 2%" per year). CMS's `Simulation.m` uses `SigBeta = .196/10` on
+that t, and this section copied it until 2026-09-05. E[u] does not depend on σ_β and the Ymin
+cut is non-binding, so `--mode smm-mean` and `--mode ols` are unchanged by the fix. What moves:
 
-`gcohort_model.py` holds the shared GKOS process, simulation, suffix tables and moment map.
+- the LEVEL E[e^u]: ×1.12 at age 40, ×1.36 at 55, ×1.79 at 70 — which is what the aggregate
+  validation runs on;
+- the dispersion (sd log at 55: 0.70 → 1.05), which brings the untargeted sdlog to within 0.013
+  of the sel0 data on average — and, through it, the model's log PERCENTILES relative to its
+  mean. So `--mode smm-quantiles` DOES move: its g0 rises by 0.14 (men) / 0.15 (women), and
+  where it used to sit 0.14 below the mean-only fit it now agrees with it to ±0.05.
 
-**Three things about these modes that are easy to get wrong:**
+The aggregate validation, GKOS/benchmark with `--renorm-comp`, quadratic g:
+
+| in sample 1951–2006 | taxable | uncapped |
+|---|---|---|
+| old pipeline (σ_β/10, old quantile fit) | 0.996 [0.953–1.045] | 0.990 [0.876–1.071] |
+| old quantile fit, σ_β fixed | 1.019 [0.952–1.091] | 1.145 [1.028–1.238] |
+| **refit, `smm-quantiles`** | **1.091 [0.995–1.194]** | **1.282 [1.174–1.366]** |
+| refit, `smm-mean` (σ_β-invariant) | 1.115 [1.002–1.237] | 1.310 [1.237–1.369] |
+
+Over 2007–22 the refit is 1.21–1.25 taxable, on the TR projection 1.23–1.26. **So the old
+headline — 0.992, "agrees with the parametric surface to under a point" — was two errors
+cancelling**: σ_β/10 depressed the level by ~10–15%, and the too-narrow model pulled the
+quantile-weighted g0 down by ~0.14. Fixed, the GKOS process with only g(t) free overshoots
+covered earnings by ~10% capped and ~30% uncapped. Two known sources, both with the right
+sign: g is fitted to the GKSW files, whose quantiles sit ABOVE EPUF's by a bottom-heavy,
+age-increasing sample-composition wedge (see the Gotchas), so a g reproducing GKSW's mean log
+earnings puts the covered population's mean too high; and the fixed GKOS dispersion at 55 (sd
+log 1.05) exceeds the data's, and E[e^u] is exponential in it (exp(Δσ²/2) ≈ 1.10). Do not
+"fix" this by retuning σ_β; the cross-section figure's `--gkos` overlay now shows the gap.
+
+`plot_cms_selection.py` deliberately keeps CMS's `.196/10` and their `corr = 0.786` (Table IV:
+0.768): its subject is CMS's process as run, and it says so.
+
+**Three things about the modes that are easy to get wrong:**
 
 - **`--mode ols` is on a different LEVEL.** It regresses the observed moment directly, so its `g`
   absorbs the `E[u | u ≥ log(Ymin) − g]` term the SMM modes strip out (~0.38 log points). It
@@ -128,20 +168,33 @@ percentage point despite sharing no parameters.
   offset is a **fixed point** — `E[u|·]` must be read at the *inverted* g, and projected onto the
   cubic basis and reduced to its constant term. Evaluating it one-shot at the OLS g, or as a plain
   mean over ages, is off by 0.08–0.18 log points and by different amounts for men and women.
-  Slopes need no correction and are the useful comparison.
+  Slopes need no correction and are the useful comparison. On `--sel sel3` this mode reproduces
+  CMS's published coefficients to ~4e-6 (`compare_g_cms.py` prints it).
 - **The shape moments cannot identify g, and that is measured, not assumed.** `dm/dg` is ~1.000
   for meanlog and every log percentile, and ~0.00–0.02 for sdlog/skewlog/kurtlog, because at the
   GKOS parameters the Ymin truncation is nearly non-binding among positive earners (max censored
   share ~0.001 — the nonemployment shock puts the low mass at exactly zero, not just above Ymin).
-  So there is no `--mode` for them. `gcohort_smm.py` still exposes `--moments {all,quantiles}` for
-  the **specification test** they do support, which rejects the fixed GKOS calibration in 100% of
-  blocks (men c=1970: J = 143,919 on df 306).
+  So there is no `--mode` for them. `gcohort_smm.SETS` still exposes `all`/`quantiles` for the
+  **specification test** they do support, which rejects the fixed GKOS calibration in 100% of
+  blocks.
 - **Weight-matrix noise dominates the reported standard errors.** Across bootstrap redraws of Ŝ
   the sd of `ĝ0` is 6–9× the asymptotic SE. The `se_*` columns understate real uncertainty by
   that factor; `wsd_*` records the measured noise; `--wnoise K` re-measures it on any run.
   Raising `--reps` above 1000 is the lever, at linear cost.
 
-`--mode ols` needs `replication_repos/CMS` for the SSA average-wage series; the SMM modes do not.
+**The extrapolation rule assumes g0 tracks the average wage one-for-one, and men's does not.**
+`extrapolate_g_cohort.py` prints the in-sample regression of g0 on the wage index every run:
+with the quadratic `smm-quantiles` fit men's slope is **−0.47** (corr −0.72; g0 falls 0.15 log
+points from cohort 1957 to 1983 while the real average wage rises 0.32; `smm-mean`: −0.10, flat),
+women's +1.3. The forward splice therefore kinks the male level path (in-sample +1.1%/yr at the
+edge, extrapolated +1.7%/yr). That is a
+modelling choice made so the aggregate tracks the published wage path; the data do not imply it.
+
+`--mode ols` and `compare_g_cms.py` need `replication_repos/CMS` for the SSA average-wage
+series; the SMM modes do not. The deflator and the sel0 screen come from
+`cross_sections/guv_targets.py` (ONE definition); the section's own single nominal↔2013$
+conversion is `extrapolate_g_cohort.price_index` (GKSW's PCE vintage where it exists, chained on
+FRED outside it, then the TR wage deflator), which the plots import.
 
 Two cohort×age heatmap scripts live with the report they were written for
 (`presentation/2026-08-24/`) rather than under `code/` + `output/`, so that folder is

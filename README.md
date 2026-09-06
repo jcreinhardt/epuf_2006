@@ -138,15 +138,16 @@ epuf_2006/
 │   │       └── plot_ass_capped_ratio.py
 │   └── dynamics/
 │       ├── estimate_g_cohort.py           # UNIFIED ENTRY POINT: --mode ols | smm-mean | smm-quantiles
-│       ├── gcohort_model.py               # GKOS process, simulation, suffix tables, the moment map
+│       ├── gcohort_model.py               # GKOS process, simulation, suffix tables, the moment map (no plotting)
 │       ├── gcohort_ols.py                 # --mode ols: CMS's per-block OLS (reproduces their coefficients)
 │       ├── gcohort_smm.py                 # --mode smm-*: SMM with multi-step optimal weighting
-│       ├── extrapolate_g_cohort.py        # extrapolate g(t) off the observed cohort range
-│       ├── simulate_cms_selection.py      # standalone selection-bias experiment
-│       ├── simulate_gkos_ordinal.py       # standalone ordinal-transform experiment
+│       ├── extrapolate_g_cohort.py        # extrapolate g(t) off the observed cohort range; price_index()
 │       └── plots/
+│           ├── plot_g_cohort.py           # coefficient paths by cohort, any fit/extrapolated CSVs overlaid
+│           ├── compare_g_cms.py           # fitted g vs CMS's published lifecycle profiles
 │           ├── plot_agg_tax_dynamics.py   # aggregate taxable earnings from the g(t) path vs ASS
-│           └── compare_g_cms.py           # fitted g vs CMS's published lifecycle profiles
+│           ├── plot_cms_selection.py      # CMS's process as they coded it: the selection wedge
+│           └── plot_gkos_ordinal.py       # ordinal-transform invariance to g(t)
 ├── processed_data/
 │   └── ssa.duckdb                     # shared DB: demographic + annual + supplement_4b1 (~1.6 GB)
 └── output/                            # generated artifacts (regenerable; not version-controlled)
@@ -157,6 +158,10 @@ epuf_2006/
     └── cross_sections/
         ├── cross_section_params.csv           # stage-1 fitted params (+ info_*), one row per year × sex × single-year age (≥1000 obs)
         ├── cross_section_params_smoothed.csv  # stage-2 smoothed params (feeds the downstream polynomial extrapolation)
+        ├── plots/                             # all figures
+    └── dynamics/
+        ├── g_cohort_{ols,smm_mean,smm_quantiles}[tag].csv   # one row per sex x cohort
+        ├── *_extrapolated.csv                 # every cohort 1892-2105, read by plot_agg_tax_dynamics.py
         └── plots/                             # all figures
             ├── {women_mixture,men_dpln}_c<cohort>_a<age>.{pdf,png}
             ├── param_heatmaps_{men,women}{,_smoothed}.{pdf,png}
@@ -341,12 +346,19 @@ python code/dynamics/estimate_g_cohort.py --mode ols             # CMS's per-blo
 python code/dynamics/estimate_g_cohort.py --mode smm-mean        # SMM on meanlog alone (model inversion)
 python code/dynamics/estimate_g_cohort.py --mode smm-quantiles   # SMM on meanlog + p10…p98, optimal weighting
 python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_mean.csv
+python code/dynamics/plots/plot_g_cohort.py output/dynamics/g_cohort_smm_mean.csv output/dynamics/g_cohort_smm_mean_extrapolated.csv
+python code/dynamics/plots/plot_agg_tax_dynamics.py --profiles output/dynamics/g_cohort_smm_mean_extrapolated.csv
 ```
 
-`--mode ols` reproduces CMS's published `lifecycle_income_*.dta` coefficients to ~3e-7 on `sel3`.
+Estimation CSVs land in `output/dynamics/`, every figure in `output/dynamics/plots/`.
+`--mode ols` reproduces CMS's published `lifecycle_income_*.dta` coefficients to ~4e-6 on `sel3`.
 Its `g` is on a different **level** from the SMM modes — it absorbs the `E[u | u ≥ log(Ymin) − g]`
 term the SMM modes strip out — so it reports `eu_offset` per block, with
 `g0(ols) = g0(smm-mean) + eu_offset` exact. Slopes need no such correction.
+
+The GKOS process is held at its published parameters, with one correction to note: the HIP
+slope dispersion is `σ_β = 0.196` per decade of age (Table IV, on the same `t = (age−24)/10` as
+g(t)), not the `0.196/10` CMS's `Simulation.m` uses. `CLAUDE.md` records what that changes.
 
 **Stage 1** (`--mode mle`, implemented in `crosssec_mle.py`) fits ~6.4k `(year, sex, age)` cells (single-year ages
 with ≥1000 positive-earnings observations; smaller cells skipped) in ~3 minutes: it pulls the data
