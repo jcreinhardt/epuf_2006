@@ -40,10 +40,14 @@ processed_data/*
 # is seconds away from those CSVs. A "larger than N MB" rule would get this exactly
 # backwards, because the expensive artifacts are the big ones (the parameter surfaces
 # are 1–2 MB each) and the cheap ones are the small ones.
+# PNGs ARE kept: they are the figures you actually look at and paste into slides, and a
+# figure is also a record of what a run looked like at the time, which the CSV alone is not.
+# The vector twins are not — a .pdf under output/ is regenerated beside its .png every run,
+# and the ones worth freezing get copied into presentation/<date>/figures/, which is tracked
+# by its own rule above.
 # Ignore the FILES, not the plots/ directories: eight cross-section plot scripts write
 # into theirs without creating it, so the skeleton has to survive a fresh clone.
 output/**/*.pdf
-output/**/*.png
 output/**/*.svg
 !output/**/.gitkeep
 

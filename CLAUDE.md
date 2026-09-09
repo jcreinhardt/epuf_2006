@@ -707,10 +707,12 @@ session does not have to rediscover them. Roughly in order of how much they affe
   EPUF microdata and Supplement aggregates — lives here so replication queries can `JOIN`
   microdata against the published series `USING (year)`. The two loaders each touch only
   their own tables (`CREATE OR REPLACE`), so they compose without stepping on each other.
-- **`output/` is version-controlled, but only the CSVs.** The split is by COST, not size: a
-  parameter surface or a `g(t)` fit is minutes to hours of compute and is worth committing, while
-  every figure is seconds away from those CSVs, so `*.pdf`/`*.png`/`*.svg` under `output/` are
-  ignored. Note the consequence for git worktrees: a CSV produced in one is now a real, trackable
+- **`output/` is version-controlled: the CSVs and the PNGs, not the PDFs.** The CSVs are minutes
+  to hours of compute. The PNGs are kept for a different reason — they are the figures you look at
+  and paste into slides, and a figure is a record of what a run looked like at the time, which the
+  CSV alone is not. The `*.pdf`/`*.svg` twins are regenerated beside every PNG and are ignored;
+  the ones worth freezing get copied into `presentation/<date>/figures/`, which has its own rule.
+  Note the consequence for git worktrees: a CSV produced in one is now a real, trackable
   file rather than something lost with the worktree — but **do not `git add` a symlinked CSV**.
   Worktrees carry symlinks into the main checkout (see the Gotchas), and committing one stores an
   absolute path that is broken everywhere else. Add output artifacts from the main checkout.
