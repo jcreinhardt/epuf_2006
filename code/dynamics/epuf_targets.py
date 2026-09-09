@@ -101,6 +101,41 @@ def load_p50(min_n=500, db=DB):
     return d.drop(columns="capr").sort_values(["sex", "cohort", "age"], ignore_index=True)
 
 
+def load_meanlog_capped(min_n=200, db=DB):
+    """DataFrame(sex, cohort, age, year, n, meanlog, logcap) for the LEVEL target.
+
+    A different job from `load_p50`, and a different screen.  The median disciplines SHAPE and
+    is taken over the sel0-screened cells so it lines up with the GKSW block; this moment
+    disciplines the LEVEL against the population the aggregate is denominated in, which is ALL
+    covered workers with positive earnings -- ASS's own universe -- so no screen is applied.
+
+    EPUF `earnings` is already top-coded at the year's taxable maximum, and the mean of a
+    top-coded variable is not the mean of anything.  The mean of its LOG still is, provided the
+    model is clipped at the SAME cap, which is why `logcap` comes back with it: the caller
+    compares mean log min(Y, C) on both sides and the top code cancels instead of biasing.
+    Deflated with the module's own PCE vintage, so `meanlog` and `logcap` are in log BASE_YEAR
+    dollars like everything else here and the model's cut is log(cap) - g with no price index.
+    """
+    y0, y1 = YEARS
+    par = ",".join(f"({y},{_PCE_GKSW[BASE_YEAR - 1947] / _PCE_GKSW[y - 1947]:.8f})"
+                   for y in range(y0, y1 + 1))
+    q = f"""COPY (WITH par(year, defl) AS (VALUES {par}),
+    tm AS (SELECT year, MAX(earnings) AS cap FROM annual WHERE earnings > 0 GROUP BY year)
+    SELECT d.sex, d.yob + 25 AS cohort, a.year - d.yob AS age, a.year AS year, COUNT(*) AS n,
+           AVG(LN(a.earnings * par.defl)) AS meanlog, LN(MAX(tm.cap * par.defl)) AS logcap
+    FROM annual a JOIN demographic d USING (id)
+    JOIN par ON par.year = a.year JOIN tm ON tm.year = a.year
+    WHERE a.earnings > 0 AND d.sex IN (1, 2) AND d.yob IS NOT NULL
+      AND a.year - d.yob BETWEEN {AGES[0]} AND {AGES[-1]}
+    GROUP BY 1, 2, 3, 4) TO '/dev/stdout' (FORMAT CSV, HEADER TRUE);"""
+    txt = subprocess.run(["duckdb", db, "-c", q], capture_output=True, text=True,
+                         check=True).stdout
+    d = pd.read_csv(io.StringIO(txt))
+    d["sex"] = d["sex"].map({1: "male", 2: "female"})
+    return (d[d["n"] >= min_n]
+            .sort_values(["sex", "cohort", "age"], ignore_index=True))
+
+
 def by_block(d):
     """(sex, cohort) -> (ages, log p50, n) over the usable cells only."""
     out = {}

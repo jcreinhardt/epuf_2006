@@ -90,8 +90,10 @@ python code/dynamics/estimate_g_cohort.py --mode smm-mean        # gcohort_smm.p
 python code/dynamics/estimate_g_cohort.py --mode smm-quantiles   # gcohort_smm.py — meanlog + p10…p98
 python code/dynamics/estimate_g_cohort.py --mode smm-p50         # gcohort_epuf.py — GKSW **and EPUF** medians
 python code/dynamics/relevel_g_cohort.py --fits output/dynamics/g_cohort_smm_p50.csv   # → *_relevelled.csv
+#   --level epuf (default) takes the level from EPUF's own mean log; --level gksw is the old one
 python code/dynamics/plots/plot_p50_fit.py [--cohort 1970]       # both sources, model, model+δ
 python code/dynamics/plots/plot_shape_gap.py                     # why the level misses: log-earnings shape
+python code/dynamics/plots/plot_level_shape_decomp.py            # model/EPUF per worker: level x shape
 python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_mean.csv   # → *_extrapolated.csv
 python code/dynamics/plots/plot_g_cohort.py output/dynamics/g_cohort_*.csv     # coefficient paths, any CSVs overlaid
 python code/dynamics/plots/compare_g_cms.py [--fits CSV]                       # vs CMS's lifecycle_income_*.dta
@@ -146,13 +148,18 @@ aggregate.** Measured over 25–55, model minus GKSW data:
 
 So a level fitted to the median inherits the whole skewness error, worth about exp(0.17) on
 E[e^g]. `relevel_g_cohort.py` is the resolution: **median for shape, mean for level**. It moves
-only `g0`, per block, to a fixed point where the model's mean log matches the published one
-(−0.170 men, −0.183 women), leaving curvature and hinges exactly as fitted. Its output describes
-GKSW's population, so `delta` is dropped and the aggregate takes `--universe gksw`.
+only `g0`, per block, to a fixed point against one published mean per block, leaving curvature
+and hinges exactly as fitted. `delta` is dropped either way, so the aggregate takes
+`--universe gksw`.
 
-**The EPUF↔GKSW wedge is statistic-dependent** — −0.063 in the median but −0.164 in the mean, for
-men — so any bridge is valid only for the statistic it was estimated on. `--universe epuf` adds δ,
-which is right for a median-levelled profile and under-corrects a mean-levelled one.
+**WHICH POPULATION the mean comes from is worth more than the choice of functional, and it is
+`--level`.** The EPUF↔GKSW wedge is statistic-dependent — −0.063 in the median but **−0.164 in
+the mean**, for men — so a level read off GKSW's mean (`--level gksw`, shifts −0.170/−0.183) puts
+the *covered* population 0.19 log points high, and the aggregate benchmark is ASS covered
+earnings over all covered workers, which is EPUF's universe. `--level epuf`, now the **default**,
+targets EPUF's own mean log instead (shifts −0.348/−0.389) with the **model clipped at the same
+top code**, so the moment is mean log min(Y, C) on both sides and EPUF's cap cancels rather than
+biasing the target down. Only `g0` moves; the shape still comes entirely from the medians.
 
 Aggregate, `--renorm-comp`, ages 20–70, in sample 1951–2006:
 
@@ -161,9 +168,31 @@ Aggregate, `--renorm-comp`, ages 20–70, in sample 1951–2006:
 | `smm-quantiles` | 1.091 | 1.282 |
 | `smm-mean` | 1.103 | 1.268 |
 | `smm-p50`, `--universe epuf` | 1.173 | 1.380 |
-| **`smm-p50` re-levelled, `--universe gksw`** | **1.070** | **1.212** |
+| `smm-p50` re-levelled, `--level gksw` | 1.070 | 1.212 |
+| **`smm-p50` re-levelled, `--level epuf`** | **0.943** | **1.022** |
 
-**The overshoot is NOT an age-extrapolation failure**, and that is measured rather than assumed:
+EPUF itself is 0.948 of the published total, so the last row is **model/EPUF = 0.995**: the model
+now reproduces the microdata, and the residual 5% is EPUF's own coverage of the published series,
+not model error. Forward it is 1.035 (2007–22) and 1.059 (2023–2100), against 1.21–1.24 before.
+**The uncapped 1.022 is the one to be impressed by** — the uncapped mean is targeted nowhere, so
+matching it is the shape passing a test it was not fitted to. Set against that, the level is now
+calibrated to EPUF, so the *taxable* comparison to ASS is no longer independent of the data.
+
+**Where the error was, split exactly** (`plots/plot_level_shape_decomp.py`: every cell weighted by
+EPUF's OWN worker count, so composition and worker totals cancel; capped on both sides, so the
+top code cancels too). Taxable earnings per covered worker, 1951–2006, ages 20–70:
+
+| level | model / EPUF | = level | × shape |
+|---|---|---|---|
+| `--level gksw` | 1.060 | 1.195 | 0.887 |
+| `--level epuf` | 0.915 | 1.031 | 0.887 |
+
+Shape is identical because re-levelling moves only `g0` — that is the check that the split is
+real. **The old total looked better than either of its parts**: a +20% population-wedge level
+error was cancelling against an −11% capped-shape shortfall. Uncapped the two do not cancel, and
+1.212 ÷ 1.022 = 1.186 is the same wedge showing up undisguised.
+
+**The overshoot was NOT an age-extrapolation failure**, and that is measured rather than assumed:
 the +0.171 mean-log gap above is computed on ages 25–55 only, and alone implies ≈1.19× on levels
 before any extrapolation happens. (Do NOT try to confirm this by re-running the aggregate on
 `--ages 25 55`: `--renorm-comp` then assumes the under-25s and over-55s earn like the 25–55
