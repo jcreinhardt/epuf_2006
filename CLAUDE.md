@@ -144,7 +144,30 @@ python code/dynamics/plots/plot_gkos_ordinal.py     # ordinal-transform invarian
 python code/dynamics/plots/plot_epuf_vs_model_hist.py [--years 1965 1995] [--fits CSV]
 python code/dynamics/plots/plot_cms_cross_section.py [--sex men|women] [--eras 1960 1975 1995 2005]
 python code/dynamics/plots/plot_cms_cross_section.py --year 1995   # that one year in full, + GKSW
+python code/dynamics/plots/plot_le_profiles.py [--yob YYYY] [--fits CSV] [--band 2]
 ```
+
+`plot_le_profiles.py` checks the fitted `g(t)` against the ONE thing GKOS (2021) targeted about
+earnings *levels* by age — their set-2 moment, average dollar earnings by age within lifetime
+(mean, ages 25–55)-earnings groups. Both sides: rank people by mean real earnings over 25–60
+(zeros filled in — `annual` is sparse), take ±2pt bands around p25/p50/p75, average earnings by
+age within each band, zeros included. The model is put through EPUF's own disclosure protection
+(`epuf_disclosure.py`, factored out of `plot_epuf_vs_model_hist.py` once a second script needed
+it) year by year before ranking and averaging, so both sides are censored at the same taxable
+maximum before comparison — load-bearing here because the one cohort with both a complete 25–70
+EPUF span and a directly-fitted (not extrapolated) `g(t)` is cohort 1957 (yob 1932), whose 20s
+sit in the tight-cap 1950s (cap binds 40%+ of men). p50 and p75 track reasonably (ratio of
+means-over-ages 0.82, 0.92); **p25 does not** (0.94 on the same summary, but the age *shape* is
+wrong): EPUF's p25 profile collapses from $19k at 34 to $5k by 53, the model's stays flat near
+$9–12k. Measured, not assumed — zero share by age, p25 band: **EPUF 17%→34%→74%** (ages
+25→42→60) **vs model 23%→41%→42%**, while earnings *conditional on working* in EPUF's p25 group
+RISE across the same span. So the EPUF profile falls from rising nonemployment among people who
+already have low lifetime earnings — disability, incarceration, informal work, or death showing
+up as zero years, none flagged in EPUF — not falling wages, and GKOS's single 1978–2013 male
+nonemployment logit has no channel for one subpopulation's exit becoming near-permanent, so it
+cannot reproduce it. `epuf_disclosure.epuf_codes_many` batches the per-year cap/code lookups
+into 3 DuckDB queries instead of one per year — a 36-year panel otherwise spawns 100+ processes
+against the 1.7 GB DB.
 
 `plot_epuf_vs_model_hist.py` is the distributional check on **our own** fits: the histogram of
 EPUF's positive covered earnings in a year against the one the GKOS process produces when

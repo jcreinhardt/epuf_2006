@@ -102,7 +102,6 @@ Output: output/dynamics/plots/epuf_vs_model_hist.{pdf,png}
 """
 import argparse
 import os
-import subprocess
 import sys
 
 import numpy as np
@@ -116,18 +115,16 @@ from matplotlib.lines import Line2D
 sys.path.insert(0, "code/dynamics")          # run from the project root, per repo convention
 sys.path.insert(0, "code/cross_sections")
 import gcohort_model as E
+from epuf_disclosure import disclose, duck, epuf_codes
 from guv_targets import BASE_YEAR, load_deflator, sel0_threshold
 
 OUT = "output/dynamics/plots"
-DB = "processed_data/ssa.duckdb"             # -readonly: several short queries, no writes
 FITS = "output/dynamics/g_cohort_smm_p50_relevelled_extrapolated.csv"
 SEXES = ((1, "male", "Men"), (2, "female", "Women"))
 
 # Palette: slots 1 and 2 of the dataviz reference instance, unmodified and in fixed order
 # (their CVD and normal-vision separation is validated there; do not re-step them).  Data is
-# the subject, so it takes slot 1; the model is the comparison, slot 2.  The undisclosed model
-# is the SAME entity under a different treatment, so it keeps the model's hue and separates by
-# dash -- a third hue would claim it is a third thing.
+# the subject, so it takes slot 1; the model is the comparison, slot 2.
 C_DATA, C_MODEL = "#2a78d6", "#eb6834"
 INK, INK_2, INK_3 = "#0b0b0b", "#52514e", "#8a8984"
 GRID = "#e7e6e2"
@@ -138,12 +135,6 @@ GRID = "#e7e6e2"
 BINS = np.linspace(np.log(200.0), np.log(2e6), 46)      # log 2013 dollars
 
 
-def duck(q):
-    out = subprocess.run(["duckdb", "-readonly", DB, "-csv", "-c", q],
-                         capture_output=True, text=True, check=True).stdout
-    return pd.read_csv(pd.io.common.StringIO(out))
-
-
 def epuf(year, ages):
     """Positive covered earnings by (sex, age), and the age-cell populations behind them."""
     e = duck(f"SELECT d.sex, a.year - d.yob AS age, a.earnings FROM annual a "
@@ -152,61 +143,6 @@ def epuf(year, ages):
     pop = duck(f"SELECT sex, count(*) AS pop FROM demographic WHERE sex IS NOT NULL "
                f"AND {year} - yob BETWEEN {ages[0]} AND {ages[1]} GROUP BY 1")
     return e, pop.set_index("sex")["pop"]
-
-
-# ------------------------------------------------------- EPUF's disclosure protection
-# Recovered from the data itself, not assumed (the scan is in the docstring): the recorded
-# value is the true one random-rounded to a base that steps at $1,000 and $50,000 NOMINAL,
-# with a single code below $100, a collapse value for anything that rounds up to the cap
-# without reaching it, and the cap itself on top.  The two code VALUES are read out of EPUF
-# per year rather than recomputed, so they are the data's own constants.
-ROUND_STEPS = ((1_000.0, 25.0), (50_000.0, 100.0), (np.inf, 1_000.0))
-CODE_LO_MAX = 100.0            # below this EPUF stores one number: the sub-$100 mean
-
-
-def epuf_codes(year):
-    """(cap, sub-$100 code, near-cap collapse value or None) for `year`, read from EPUF."""
-    cap = float(duck(f"SELECT MAX(earnings) AS m FROM annual WHERE year={year}")["m"][0])
-    lo = duck(f"SELECT earnings, count(*) n FROM annual WHERE year={year} AND earnings>0 "
-              f"AND earnings<{CODE_LO_MAX:.0f} GROUP BY 1 ORDER BY n DESC LIMIT 1")
-    # the collapse value is the one near-cap amount that is NOT on the rounding grid
-    base = base_of(np.array([cap]))[0]
-    c = duck(f"SELECT earnings, count(*) n FROM annual WHERE year={year} "
-             f"AND earnings > {cap - 5 * base} AND earnings < {cap} "
-             f"AND earnings % {base:.0f} <> 0 GROUP BY 1 ORDER BY n DESC LIMIT 1")
-    return cap, float(lo["earnings"][0]), (float(c["earnings"][0]) if len(c) else None)
-
-
-def base_of(x):
-    """The rounding base EPUF uses at each nominal amount."""
-    b = np.full(np.shape(x), ROUND_STEPS[-1][1], float)
-    for hi, step in reversed(ROUND_STEPS[:-1]):
-        b[np.asarray(x) < hi] = step
-    return b
-
-
-def disclose(x, year, rng, codes=None):
-    """Put nominal dollars through EPUF's disclosure protection, in EPUF's order.
-
-    Random rounding is STOCHASTIC and unbiased -- down with probability 1 - frac, up with
-    probability frac -- so the mean survives and only the fine structure is destroyed, which
-    is the point of the scheme and the reason a deterministic round would not reproduce it.
-
-    CHECKED two ways, which is how the bases and thresholds above were pinned down: run on
-    EPUF's OWN values it is a fixed point (100.0% unchanged in 1965 and 1995 -- every recorded
-    amount already sits on the grid this function would put it on), and on a smooth lognormal
-    input it preserves the mean below the cap to 4e-4 (1965) and 4e-7 (1995)."""
-    cap, code_lo, collapse = codes if codes else epuf_codes(year)
-    x = np.asarray(x, float)
-    b = base_of(x)
-    q, frac = np.divmod(x / b, 1.0)
-    out = b * (q + (rng.random(x.size) < frac))
-    if collapse is not None:                      # rounds up to the cap without reaching it
-        out[(x < cap) & (out >= cap)] = collapse
-        out[x == collapse] = collapse             # already collapsed: a fixed point
-    out[x >= cap] = cap
-    out[x < CODE_LO_MAX] = code_lo
-    return out
 
 
 def model_draws(year, weights, fits, u, ages):
