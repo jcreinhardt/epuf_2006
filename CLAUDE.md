@@ -270,13 +270,30 @@ taxable earnings by routes that share no parameters — the per-cell dPlN/mixtur
 GKOS lifecycle process with only g(t) free — so overlaying them is a real check. Four steps:
 
 ```bash
-python code/dynamics/estimate_g_cohort.py --mode smm-quantiles --jobs 8
-python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_quantiles.csv
+python code/dynamics/estimate_g_cohort.py --mode smm-p50 --jobs 8
+python code/dynamics/relevel_g_cohort.py --fits output/dynamics/g_cohort_smm_p50.csv
+python code/dynamics/extrapolate_g_cohort.py \
+    --fits output/dynamics/g_cohort_smm_p50_relevelled.csv
 python code/dynamics/plots/plot_agg_tax_dynamics.py \
-    --renorm-comp --export output/dynamics/agg_taxable_gkos_smmq.csv
+    --profiles output/dynamics/g_cohort_smm_p50_relevelled_extrapolated.csv \
+    --universe gksw --renorm-comp --export output/dynamics/agg_taxable_gkos_p50_relev.csv
 python code/cross_sections/plots/plot_agg_tax_total.py \
-    --gkos output/dynamics/agg_taxable_gkos_smmq.csv
+    --gkos output/dynamics/agg_taxable_gkos_p50_relev.csv
 ```
+
+**The headline figure is that last command's ratio pair** — every series divided by the ASS+TR
+benchmark, with the benchmark itself drawn as the labelled line at 1:
+
+  * `output/cross_sections/plots/aggregate_taxable_ratio_insample.png` — 1951–2006, EPUF +
+    parametric cross-sections + GKOS cohort model, the only window where all three exist.
+  * `output/cross_sections/plots/aggregate_taxable_ratio_full.png` — 1937–2100, the two models
+    (EPUF has no years outside 1951–2006).
+
+What it shows: the two models agree to a few points from 1980 on and settle at 1.02 (parametric)
+and 1.07 (GKOS) on the TR projection. Before 1980 the GKOS line runs 0.87–0.91 while EPUF and the
+parametric surface sit at 0.96–0.98, and that gap is the **backward cohort extrapolation**, not
+the fit: those years are carried by cohorts outside 1957–1983 whose shape is frozen at the
+1957–61 edge and whose level rides the wage index one for one.
 
 **`--renorm-comp` is not optional here, and the loader enforces it.** The dynamics model covers
 ages 20–70 only; its own figure compares to the undivided published total and reports the

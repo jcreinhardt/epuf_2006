@@ -515,6 +515,9 @@ def ratio_figure(path, bench, series, x0, x1, title, styles=None, nmark=14):
     styles = styles or SERIES
     fig, ax = plt.subplots(figsize=(7.6, 4.3))
     ax.axhline(1.0, color="#9a9a9a", lw=1.0, zorder=1)
+    ax.annotate("ASS", xy=(1.0, 1.0), xytext=(4, 2), xycoords=("axes fraction", "data"),
+                textcoords="offset points", color="#6a6a6a", fontsize=9.5,
+                va="bottom", ha="left", annotation_clip=False)
     for key, d in series:
         xs = [y for y in sorted(d) if x0 <= y <= x1 and y in bench]
         if not xs:
