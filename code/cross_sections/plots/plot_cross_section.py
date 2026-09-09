@@ -9,7 +9,7 @@ spikes. A box reports the fitted parameters, the censored shares, and the implie
 mean E[X].
 
 Men are fit with the double Pareto-lognormal (a single Normal-Laplace density), women with
-the two-component lognormal mixture -- the pairing from crosssec_fit.
+the two-component lognormal mixture -- the pairing from xs_model.
 
 By default the parameters come from the PIPELINE output (the joint smoothed-constrained
 solve), so the curve drawn is the one the rest of the project actually uses. `--refit` runs
@@ -34,19 +34,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
-import crosssec_fit as cf
+import xs_model as xm
+from estimate_cross_sections import fit_cell
 
 PARAMS = Path("output/cross_sections/cross_section_params_smoothed.csv")
 
-# per-sex plumbing: fitter, human label, model name, output-file tag
-FIT        = {1: cf.fit_dpln, 2: cf.fit_mixture}
+# per-sex plumbing: human label, model name, output-file tag
 LABEL      = {1: "male",      2: "female"}
 MODEL_NAME = {1: "double Pareto-lognormal", 2: "lognormal mixture"}
 FILE_TAG   = {1: "men_dpln",  2: "women_mixture"}
 
 
 def comp_density(yy, mu, s):        # normal pdf on the log-earnings axis
-    return np.exp(-np.log(s) - 0.5 * cf.LOG2PI - 0.5 * ((yy - mu) / s) ** 2)
+    return np.exp(-np.log(s) - 0.5 * xm.LOG2PI - 0.5 * ((yy - mu) / s) ** 2)
 
 
 def fitted_curves(yy, sex, r):
@@ -62,7 +62,7 @@ def fitted_curves(yy, sex, r):
         comps = [(f"comp 1 (w={w:.2f}, med ${np.exp(mu1):,.0f})", c1, "C0"),
                  (f"comp 2 (w={1-w:.2f}, med ${np.exp(mu2):,.0f})", c2, "C2")]
         return c1 + c2, comps
-    dens = np.exp(cf.nl_logpdf(yy, r["alpha"], r["beta"], r["nu"], r["tau"]))  # dPlN
+    dens = np.exp(xm.nl_logpdf(yy, r["alpha"], r["beta"], r["nu"], r["tau"]))  # dPlN
     # the Normal-Laplace pdf overflows to +inf far into the lower tail (the Mills ratio blows
     # up where the density is negligible anyway); zero those out or the y-limit is inf.
     return np.nan_to_num(dens, nan=0.0, posinf=0.0, neginf=0.0), []
@@ -71,12 +71,12 @@ def fitted_curves(yy, sex, r):
 def param_text(sex, r):
     """Fitted parameters + implied uncapped mean, for the on-figure box."""
     if sex == 1:
-        m = cf.dpln_mean(r["alpha"], r["beta"], r["nu"], r["tau"])
+        m = xm.dpln_mean(r["alpha"], r["beta"], r["nu"], r["tau"])
         mtxt = "infinite (α≤1)" if not np.isfinite(m) else f"${m:,.0f}"
         return (f"α = {r['alpha']:.3f}   β = {r['beta']:.3f}\n"
                 f"ν = {r['nu']:.3f}   τ = {r['tau']:.3f}\n"
                 f"E[X] uncapped = {mtxt}")
-    m = cf.mix_mean(r["mu1"], r["mu2"], r["sig1"], r["sig2"], r["w"])
+    m = xm.mix_mean(r["mu1"], r["mu2"], r["sig1"], r["sig2"], r["w"])
     return (f"μ₁ = {r['mu1']:.3f}   σ₁ = {r['sig1']:.3f}\n"
             f"μ₂ = {r['mu2']:.3f}   σ₂ = {r['sig2']:.3f}\n"
             f"w = {r['w']:.3f}\n"
@@ -105,13 +105,13 @@ def plot_cross_section(age=40, cohort=1950, sex=2, refit=False, overlay=False):
 
     Returns the path of the PDF written under output/cross_sections/plots/."""
     year = cohort + age
-    x = cf.load_earnings(year, sex, age=age)
+    x = xm.load_earnings(year, sex, age=age)
     if x.size == 0:
         sys.exit(f"no EPUF observations for year={year} sex={sex} age={age}")
 
     if refit or overlay:
-        highc_fit = cf.taxmax(year) - cf.HIGH_MARGIN
-        fitted = FIT[sex](x, cf.LOWC, highc_fit)
+        highc_fit = xm.taxmax(year) - xm.HIGH_MARGIN
+        fitted, _ = fit_cell(sex, x, xm.LOWC, highc_fit)
     if refit and not overlay:
         r, highc, src = fitted, highc_fit, "standalone MLE (unsmoothed, unconstrained)"
     else:
@@ -119,7 +119,7 @@ def plot_cross_section(age=40, cohort=1950, sex=2, refit=False, overlay=False):
         highc = float(r["highc"])
         src = "joint smoothed-constrained solve"
 
-    tlo, thi = np.log(cf.LOWC), np.log(highc)
+    tlo, thi = np.log(xm.LOWC), np.log(highc)
     y = np.log(x)
     bins = np.linspace(np.log(120), np.log(highc * 1.1), 90)
     yy = np.linspace(bins[0], bins[-1], 800)
@@ -147,7 +147,7 @@ def plot_cross_section(age=40, cohort=1950, sex=2, refit=False, overlay=False):
     ax.annotate(f"right-censored\n(≥ ${highc:,.0f})", xy=(thi, ax.get_ylim()[1] * 0.55),
                 ha="right", va="top", fontsize=8, color="0.35")
 
-    n_lo = int((x <= cf.LOWC).sum()); n_hi = int((x >= highc).sum())
+    n_lo = int((x <= xm.LOWC).sum()); n_hi = int((x >= highc).sum())
     box = (param_text(sex, r) +
            f"\ncensored: {n_lo/x.size:.1%} low, {n_hi/x.size:.1%} high")
     ax.text(0.985, 0.97, box, transform=ax.transAxes, ha="right", va="top", fontsize=8.5,

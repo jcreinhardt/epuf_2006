@@ -48,8 +48,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import crosssec_fit as cf
-from plot_guv_comparison import load_guv, load_deflator, min_wage, QUANTS, QCOLS
+import xs_model as xm
+from guv_targets import load_guv, load_deflator, min_wage, QUANTS, QCOLS
 
 YEARS = (1957, 2006)      # EPUF in-sample years inside the guv window
 AGES  = (25, 55)
@@ -73,7 +73,7 @@ def epuf_quantiles():
          f"WHERE d.sex IN (1, 2) AND a.year - d.yob BETWEEN {AGES[0]} AND {AGES[1]} "
          "AND a.earnings >= mw.thr "
          "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
-    out = subprocess.run(["duckdb", "-readonly", cf.DB, "-csv", "-c", q],
+    out = subprocess.run(["duckdb", "-readonly", xm.DB, "-csv", "-c", q],
                          capture_output=True, text=True, check=True).stdout
     return pd.read_csv(StringIO(out))
 
@@ -87,7 +87,7 @@ def main():
     fac = ep["year"].map(defl)
 
     for c in QCOLS:                      # censor flags on NOMINAL values, then deflate
-        ep[f"{c}_cens"] = ep[c] >= ep["taxmax"] - cf.HIGH_MARGIN
+        ep[f"{c}_cens"] = ep[c] >= ep["taxmax"] - xm.HIGH_MARGIN
         ep[c] = ep[c] * fac
 
     merged = guv[["year", "sex", "age", "cohort"] + QCOLS].rename(

@@ -12,24 +12,13 @@ anchored to EPUF -- inherits that offset; the model tracking EPUF is the real su
 criterion, and the model/benchmark and EPUF/benchmark ratios sitting on top of each other
 in-sample is what shows it.
 
-The model determines the SHAPE of each cell's earnings distribution -- hence mean
-taxable earnings per covered worker -- not how many workers there are. The worker weight
-is the EPUF empirical joint (sex, single-year age) composition of positive earners scaled
-by the published covered-worker total: ASS num_wrk over 1937-2022 (the base underlying the
-benchmark, so the ratio's denominators match), the TR worker projection for 2023+:
-
-    workers(sex, age, y) = covered workers(y)  x  comp(sex, age, y)
-
-comp is the OBSERVED per-year EPUF composition where we have microdata (1951-2004), held
-fixed at the two data edges off-sample: the 1951-1955 average before 1951 and the
-2000-2004 average after 2004 (the only composition we can carry into years with no EPUF;
-the TR has no sex/age breakdown). This matters because the composition shifted hard --
-women were 34% of earners in 1951 vs 48% in 2004 -- so forcing the 2000-04 mix onto the
-early years (the old design) over-weighted women and misfit the in-sample aggregate.
-Because comp sums to 1, the model's worker TOTAL equals the published covered-worker total
-every year and model / benchmark is a pure comparison of taxable earnings PER WORKER: the
-extrapolated distribution vs SSA's wage assumptions. The taxable maximum caps every mean: the EPUF top-code (1951-2006),
-$3,000 before, and AWI-indexed off 2006 forward (taxmax(y) = taxmax(2006) * AWI(y)/AWI(2006)).
+THIS MODULE ONLY DRAWS. The published benchmarks come from benchmarks.py and every
+loaded/aggregated quantity from aggregates.py, whose docstrings carry the substance:
+how the model's per-cell shape is combined with the published covered-worker total and
+the EPUF (sex, age) composition, and why the composition is observed per year in sample
+rather than frozen at one edge. Because comp sums to 1, the model's worker TOTAL equals
+the published covered-worker total every year, so model / benchmark is a pure comparison
+of taxable earnings PER WORKER: the extrapolated distribution vs SSA's wage assumptions.
 
 The figure is 2x2. The TOP row is the taxable (capped) comparison above. The BOTTOM row
 adds the UNCAPPED check: the model's implied mean earnings per worker E[X] (analytic dPlN /
@@ -44,9 +33,6 @@ cap); the finite-cell line renormalizes over the alpha>1 cells and is thus a LOW
 wherever the shaded infinite-mean-worker share is positive. EPUF is absent from the uncapped
 row: it is top-coded, so it has no uncapped mean to plot.
 
-A dashed diagnostic overlays the OLD fixed-2000-04-composition aggregate, so the in-sample
-gain from using observed composition is visible directly.
-
 TWO OPTIONAL OVERLAYS, both off by default:
 
   --gkos CSV  the GKOS/Guvenen cohort-model aggregate, exported by
@@ -59,11 +45,9 @@ TWO OPTIONAL OVERLAYS, both off by default:
               inside that window its worker base is not all covered workers, so the
               age-coverage gap would read as model error against this figure's other
               series. Both are then per-covered-worker over the published worker total.
-  --e9f PARQUET  the prior cross-section pipeline's agg_taxable_earnings_extrap.parquet.
-              It is in REAL 2013 dollars while this figure is nominal. Reflating it with
-              THIS project's price index is wrong -- ours is PCE, e9f's is CPI, and they
-              differ by up to 25% mid-century. The conversion instead recovers e9f's own
-              deflator from the file, as nominal taxmax / its `tax_max_2013` column.
+  --e9f PARQUET  the prior cross-section pipeline's agg_taxable_earnings_extrap.parquet,
+              in REAL 2013 dollars while this figure is nominal. See aggregates.load_e9f
+              for why it must NOT be reflated with this project's price index.
 
   python code/cross_sections/plots/plot_agg_tax_total.py [params_csv] [tag]
         [--gkos output/dynamics/agg_taxable_gkos_smmq_quad.csv] [--e9f PATH]
@@ -79,8 +63,7 @@ surface's 2007-13 rows, which exist for ages 25-55 only) are EXCLUDED from the m
 series with a note -- summing a partial age range against a full-population benchmark
 would just measure the missing ages.
 """
-import io
-import subprocess
+
 import argparse
 import sys
 from pathlib import Path
@@ -93,262 +76,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-import crosssec_fit as cf
+# Loading and aggregation live in the section root; this module only draws. See
+# aggregates.py's docstring for why that split exists.
+from benchmarks import (MUSD, ass_taxable, ass_uncapped_per_worker, ass_workers,
+                        combined_benchmark, trustees)
+from aggregates import (BACK, DATA_LAST, agg_composed, agg_uncapped, composition_by_year,
+                        epuf_counts, epuf_direct, load_e9f, load_gkos, model_means,
+                        model_uncapped_means, taxmax_series)
+from aggregates import PARAMS as DEFAULT_PARAMS
 
-
-def model_mean_taxable(row, taxmax):
-    """E[min(exp Y, taxmax)] under the fitted distribution for one (year, sex, age) cell.
-
-    Integrate exp(y) f(y) up to log(taxmax) on a fine grid, then add the capped contribution
-    taxmax * P(Y > log taxmax) of the mass above the cap."""
-    thi = np.log(taxmax)
-    yy = np.linspace(np.log(1.0), thi, 6000)
-    if row["model"] == "dpln":
-        a, b, nu, tau = (float(row[k]) for k in ("alpha", "beta", "nu", "tau"))
-        dens = np.exp(cf.nl_logpdf(yy, a, b, nu, tau))
-        sf = 1.0 - cf.nl_cdf(thi, a, b, nu, tau)
-    else:
-        mu1, mu2, s1, s2, w = (float(row[k]) for k in ("mu1", "mu2", "sig1", "sig2", "w"))
-        dens = np.exp(cf.mix_logpdf(yy, mu1, mu2, s1, s2, w))
-        sf = cf.mix_sf(thi, mu1, mu2, s1, s2, w)
-    # the Normal-Laplace pdf overflows to +inf ~30 sigma into the lower tail (Mills ratio blows up
-    # where the density is negligible); zero those out.
-    integrand = np.nan_to_num(np.exp(yy) * dens, nan=0.0, posinf=0.0, neginf=0.0)
-    return np.trapz(integrand, yy) + taxmax * float(np.clip(sf, 0.0, 1.0))
-
-
-PARAMS = Path("output/cross_sections/cross_section_params_extrapolated.csv")
-TAG    = ""                                          # "_<tag>" suffix on the output files
+PARAMS = DEFAULT_PARAMS
+TAG    = ""         # "_<tag>" suffix on the output files
 COVER_MIN = 0.85    # a year enters the model series only if its cells carry at least this
                     # share of the year's (sex, age) worker composition
-TR_XLSX = Path("raw_data/tr2023_summary.xlsx")
-ASS_XLSX = Path("raw_data/annual_statistical_supplement.xlsx")
-DB      = cf.DB
-MUSD    = 1e6
-TAXMAX_1937_50 = 3000.0
-ANCHOR = (2000, 2004)     # forward composition: fixed at this window (last observed edge)
-BACK   = (1951, 1955)     # pre-1951 composition: fixed at the earliest observed edge
-DATA_LAST = 2004          # observed per-year composition used through here; fixed after
-
-
-def _duck(q):
-    return subprocess.run(["duckdb", DB, "-c", q], capture_output=True, text=True,
-                          check=True).stdout
-
-
-def trustees():
-    """TR intermediate: covered workers (persons), AWI, taxable payroll (millions USD)."""
-    d = pd.read_excel(TR_XLSX, sheet_name="Intermediate", header=0)
-    d = d.rename(columns={d.columns[0]: "year"})
-    d["year"] = d["year"].astype("Int64")
-    cov = d.dropna(subset=["Thousands of Covered Workers"])
-    awi = d.dropna(subset=["Average Wage Index"])
-    pay = d.dropna(subset=["Taxable Payroll, Billions"])
-    return (
-        {int(r.year): float(r._2) * 1e3 for r in
-         cov[["year", "Thousands of Covered Workers"]].itertuples()},
-        {int(r.year): float(r._2) for r in awi[["year", "Average Wage Index"]].itertuples()},
-        {int(r.year): float(r._2) * 1e3 for r in
-         pay[["year", "Taxable Payroll, Billions"]].itertuples()},   # billions -> millions
-    )
-
-
-def ass_workers():
-    """Covered-worker counts (persons) per year from the ASS workbook, annual 1937-2022 --
-    the worker base underlying the ASS taxable benchmark. Weighting the model by these over
-    the published span (TR covered workers only for the 2023+ projection) makes model/benchmark
-    a denominator-matched per-worker comparison, and lets the model reach back to 1937."""
-    d = pd.read_excel(ASS_XLSX, sheet_name="data")
-    return {int(y): float(v) * 1e3 for y, v in zip(d["year"], d["num_wrk"]) if pd.notna(v)}
-
-
-def taxmax_series(years, awi):
-    """Taxable maximum: $3,000 (<=1950), EPUF top-code (1951-2006), AWI-indexed off 2006."""
-    out = _duck("COPY (SELECT year, MAX(earnings) FROM annual WHERE earnings>0 "
-                "GROUP BY year) TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);")
-    tmax = {int(y): float(v) for y, v in (l.split(",") for l in out.strip().splitlines())}
-    base06 = tmax[2006]
-    tm = {}
-    for y in years:
-        if y in tmax:
-            tm[y] = tmax[y]
-        elif y <= 1950:
-            tm[y] = TAXMAX_1937_50
-        else:
-            tm[y] = base06 * awi[y] / awi[2006]
-    return tm
-
-
-def epuf_direct():
-    """Raw EPUF empirical aggregate taxable earnings ($M) per year = 100 x SUM(earnings)
-    over positive earners (1% sample -> population; earnings are already top-coded at the
-    taxable max, so their sum IS taxable earnings). The observed benchmark from microdata."""
-    out = _duck("COPY (SELECT year, 100*SUM(earnings)/1e6 FROM annual WHERE earnings>0 "
-                "GROUP BY year) TO '/dev/stdout' (FORMAT CSV, HEADER FALSE);")
-    return {int(y): float(v) for y, v in (l.split(",") for l in out.strip().splitlines())}
-
-
-def ass_taxable():
-    """Aggregate taxable (capped) earnings ($M) per year from the curated Annual Statistical
-    Supplement workbook: wage + self-employed taxable earnings, annual 1937-2022 (1980 ASS
-    Table 30 pre-1951, 2023 ASS Table 4.B2 for 1951+). Replaces the sparse Table-4.B1 series
-    (which had only 1937/40/45/50 before 1951); reconciles to it exactly where they overlap."""
-    d = pd.read_excel(ASS_XLSX, sheet_name="data")
-    tax = (d["aggearn_tax_wage"].fillna(0) + d["aggearn_tax_se"].fillna(0))
-    return {int(y): float(v) for y, v in zip(d["year"], tax) if pd.notna(v)}
-
-
-def ass_total():
-    """Aggregate TOTAL (UNCAPPED) covered earnings ($M) per year from the ASS workbook: wage +
-    self-employed, annual 1937-2022. The uncapped counterpart to ass_taxable -- aggearn_tot /
-    num_wrk is average earnings per worker with NO taxable cap applied, the benchmark for the
-    model's IMPLIED uncapped mean E[X]. The taxable comparison hides tail-shape error behind the
-    cap (a too-heavy upper tail matches taxable earnings once the cap clips it); comparing
-    uncapped means exposes it directly, over the whole published span."""
-    d = pd.read_excel(ASS_XLSX, sheet_name="data")
-    tot = (d["aggearn_tot_wage"].fillna(0) + d["aggearn_tot_se"].fillna(0))
-    return {int(y): float(v) for y, v in zip(d["year"], tot) if v > 0}
-
-
-def combined_benchmark(ass, trpay):
-    """One spliced published/projected series: the ASS taxable-earnings series where it exists
-    (annual 1937-2022), the TR 2023 taxable-payroll projection afterward. Returns
-    (benchmark, last ASS year)."""
-    ass_last = max(ass)
-    B = dict(trpay)
-    B.update(ass)                    # ASS overrides TR in the overlap (1960-2022)
-    return B, ass_last
-
-
-def epuf_counts():
-    """Positive-earner counts by (year, sex, single-year age), 1951-2006."""
-    q = ("COPY (SELECT a.year, d.sex, (a.year-d.yob) AS age, COUNT(*) AS n "
-         "FROM annual a JOIN demographic d USING(id) "
-         "WHERE a.earnings>0 AND d.sex IN (1,2) AND d.yob IS NOT NULL "
-         "AND (a.year-d.yob) BETWEEN 15 AND 77 GROUP BY 1,2,3) "
-         "TO '/dev/stdout' (FORMAT CSV, HEADER TRUE);")
-    return pd.read_csv(io.StringIO(_duck(q)))
-
-
-def joint_share(counts, y0, y1):
-    """The (sex, age) joint share of positive earners averaged over [y0, y1]. Sums to 1."""
-    w = counts[(counts.year >= y0) & (counts.year <= y1)]
-    tot = w["n"].sum()
-    return {(int(r.sex), int(r.age)): r.n / tot for r in
-            w.groupby(["sex", "age"], as_index=False)["n"].sum().itertuples()}
-
-
-def per_year_shares(counts):
-    """True per-year (sex, age) share -- the observed in-sample composition."""
-    sh = {}
-    for y, g in counts.groupby("year"):
-        tot = g["n"].sum()
-        sh[int(y)] = {(int(r.sex), int(r.age)): r.n / tot for r in g.itertuples()}
-    return sh
-
-
-def composition_by_year(counts, years):
-    """Per-year (sex, age) composition for the model: the OBSERVED EPUF share each year
-    over 1951-DATA_LAST, held fixed at the 1951-1955 average before 1951 and at the
-    2000-2004 average after DATA_LAST (the two data edges we can carry off-sample).
-    Returns (comp_by_year, back_share, fwd_share)."""
-    back = joint_share(counts, *BACK)          # pre-1951 fallback (earliest observed edge)
-    fwd  = joint_share(counts, *ANCHOR)        # post-2004 fallback (latest observed edge)
-    per  = per_year_shares(counts)
-    comp = {}
-    for y in years:
-        if y <= BACK[0] - 1:
-            comp[y] = back
-        elif y <= DATA_LAST:
-            comp[y] = per.get(y, fwd)          # observed composition, verbatim
-        else:
-            comp[y] = fwd
-    return comp, back, fwd
-
-
-def model_means(params, taxmax):
-    """Model mean taxable ($) per (year, sex, age), for the years present in `taxmax`."""
-    df = pd.read_csv(params)
-    means = {}
-    for r in df.to_dict("records"):
-        y = int(r["year"])
-        if y in taxmax:
-            means[(y, int(r["sex"]), int(r["age"]))] = model_mean_taxable(r, taxmax[y])
-    return means
-
-
-def agg_fixed(means, taxmax, comp, cov):
-    """Aggregate taxable ($M) with fixed 2000-04 composition scaled by TR workers(y)."""
-    agg = {}
-    for y in taxmax:
-        s = 0.0
-        for (sex, age), frac in comp.items():
-            mt = means.get((y, sex, age))
-            if mt is not None and np.isfinite(mt):
-                s += mt * cov[y] * frac
-        agg[y] = s / MUSD
-    return agg
-
-
-def agg_composed(means, taxmax, comp_by_year, cov):
-    """Aggregate taxable ($M) with a per-year (sex, age) composition x TR workers(y)."""
-    agg = {}
-    for y in taxmax:
-        comp = comp_by_year.get(y)
-        if comp is None or y not in cov:
-            continue
-        s = 0.0
-        for (sex, age), frac in comp.items():
-            mt = means.get((y, sex, age))
-            if mt is not None and np.isfinite(mt):
-                s += mt * cov[y] * frac
-        agg[y] = s / MUSD
-    return agg
-
-
-def uncapped_cell_mean(r):
-    """Analytic UNCAPPED mean E[X] of one cell -- NO cap applied. dPlN (men):
-    exp(nu+tau^2/2) * alpha*beta/((alpha-1)(beta+1)), which is INFINITE where alpha<=1 (the
-    censored-MLE heavy-tail pathology: fit to top-coded data the upper Pareto index is unidentified
-    and parks below 1). Two-component lognormal mean (women): always finite."""
-    if int(r["sex"]) == 1:
-        a, b, nu, tau = r["alpha"], r["beta"], r["nu"], r["tau"]
-        if not (a > 1.0):
-            return np.inf
-        return np.exp(nu + tau * tau / 2) * (a * b) / ((a - 1) * (b + 1))
-    w = r["w"]
-    return w * np.exp(r["mu1"] + r["sig1"] ** 2 / 2) + (1 - w) * np.exp(r["mu2"] + r["sig2"] ** 2 / 2)
-
-
-def model_uncapped_means(params, years_set):
-    """Per-cell uncapped mean E[X] for (year, sex, age) in years_set (np.inf where alpha<=1)."""
-    df = pd.read_csv(params)
-    return {(int(r["year"]), int(r["sex"]), int(r["age"])): uncapped_cell_mean(r)
-            for r in df.to_dict("records") if int(r["year"]) in years_set}
-
-
-def agg_uncapped(unc, comp_by_year, cov):
-    """Per-year model uncapped mean earnings PER WORKER (composition-weighted), plus the share of
-    workers in infinite-mean (alpha<=1) cells. The finite mean renormalizes over the finite cells,
-    so wherever that share is positive it is a LOWER BOUND on the model's true (infinite) uncapped
-    mean. Per-worker, so no worker total is needed -- comp already sums to 1."""
-    fin, inf_share = {}, {}
-    for y, comp in comp_by_year.items():
-        if y not in cov:
-            continue
-        num = wf = wi = 0.0
-        for (sex, age), frac in comp.items():
-            m = unc.get((y, sex, age))
-            if m is None:
-                continue
-            if np.isinf(m):
-                wi += frac
-            else:
-                num += m * frac; wf += frac
-        if wf > 0:
-            fin[y] = num / wf
-            inf_share[y] = wi / (wf + wi)
-    return fin, inf_share
 
 
 # Series colors. Categorical slots 1 and 2 of the reference palette plus a near-black for
@@ -426,55 +166,6 @@ def panel_ratio(ax, bench, epuf, years, model, y_lo, y_hi, ass_last, slide=False
     if slide:                      # the default 0.02 steps crowd the axis at slide type
         ax.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 5, 10]))
     ax.legend(frameon=False, loc="best", fontsize=None if slide else 8.5)
-
-
-def load_gkos(path):
-    """The GKOS/Guvenen cohort-model aggregate exported by
-    code/dynamics/plots/plot_agg_tax_dynamics.py --export.
-
-    Returns (taxable $M by year, uncapped $M by year, 2013$->nominal price index).
-    Refuses a series that was NOT exported with --renorm-comp: without it the model covers
-    only its own age window (default 20-70) and falls short of the published total by
-    whatever the other ages carry -- on this figure, whose other series are per-covered-
-    worker over ALL ages, that coverage gap would read as model error."""
-    d = pd.read_csv(path)
-    if not bool(d["renorm_comp"].iloc[0]):
-        sys.exit(f"{path} was exported without --renorm-comp, so its worker base is the "
-                 f"modelled age window rather than all covered workers. Re-run "
-                 f"plot_agg_tax_dynamics.py with --renorm-comp before overlaying it here.")
-    tax = {int(r.year): float(r.agg_taxable_musd) for r in d.itertuples()}
-    unc = {int(r.year): float(r.agg_uncapped_musd) for r in d.itertuples()}
-    price = {int(r.year): float(r.price_2013_to_nominal) for r in d.itertuples()}
-    return tax, unc, price
-
-
-def load_e9f(path, taxmax):
-    """The prior cross-section pipeline's aggregate taxable earnings
-    (project_vu .../data/intermediate/agg_taxable_earnings_extrap.parquet).
-
-    That series is in REAL 2013 dollars and this figure is nominal, so it has to be
-    reflated -- but NOT with this project's price index. Ours is PCE-based; e9f's is CPI,
-    and the two diverge by up to 25% mid-century (1960: 0.1297 vs 0.1623), which lands
-    entirely on the plotted line. So the conversion uses e9f's OWN deflator, which the
-    file pins down exactly: it carries `tax_max_2013`, the real-2013 value of a taxable
-    maximum whose nominal value we know, hence
-
-        P_e9f(y) = nominal taxmax(y) / tax_max_2013(y)
-
-    with the nominal path from taxmax_series() -- the EPUF top-code in sample, so this is
-    exact where it matters and only relies on the AWI-indexed projection after 2006. No
-    assumption about WHICH index they used is needed, which is the point of doing it this
-    way rather than looking up a CPI vintage. Years with no taxmax are dropped."""
-    d = pd.read_parquet(path)
-    if "agg_earn_total" not in d.columns:
-        sys.exit(f"{path} has no 'agg_earn_total' column; found {list(d.columns)}")
-    out = {}
-    for r in d.itertuples():
-        y = int(r.year)
-        tm13 = float(r.tax_max_2013)
-        if y in taxmax and tm13 > 0:
-            out[y] = float(r.agg_earn_total) * (taxmax[y] / tm13) / MUSD
-    return out
 
 
 # --- minimalist ratio cuts ---------------------------------------------------
@@ -579,8 +270,10 @@ def main(gkos_path=None, e9f_path=None, gkos_mean_path=None):
         gkos_mean, _, _ = load_gkos(gkos_mean_path)
 
     # ---- uncapped: model implied mean E[X] per worker vs ASS aggearn_tot/worker ----
-    ass_tot = ass_total()                                   # uncapped total earnings ($M), 1937-2022
-    ass_unc = {y: ass_tot[y] * MUSD / cov[y] for y in ass_tot if y in cov}   # $ per worker
+    # $ per worker -- the SAME published quantity estimate_cross_sections pins the joint solve to and
+    # extrapolate_params calibrates pre-1951 alpha against, so this row validates the
+    # estimator against its own target rather than a separately-derived lookalike.
+    ass_unc = ass_uncapped_per_worker()
     unc = model_uncapped_means(PARAMS, set(years))
     mu_fin, mu_infshare = agg_uncapped(unc, comp_by_year, cov)               # $ per worker, inf share
     inf_years = [y for y in sorted(mu_infshare) if mu_infshare[y] > 0.005]
