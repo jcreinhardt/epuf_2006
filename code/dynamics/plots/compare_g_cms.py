@@ -73,9 +73,15 @@ def main():
     awi, cms = O.average_wage(), cms_coefficients()
     fits = pd.read_csv(args.fits)
     fits = fits[fits["n_ages"] == E.AGES.size]
-    ours = {(r.sex, int(r.cohort)): to_cms_basis([r.g0_raw, r.g1_raw, r.g2_raw, r.g3_raw],
-                                                  int(r.cohort), awi)
-            for r in fits.itertuples()}
+    # --mode ols carries CMS's own regression (cms_b*: cubic in raw age, whatever --degree);
+    # an SMM fit is projected onto that basis instead.
+    if "cms_b0" in fits:
+        ours = {(r.sex, int(r.cohort)): np.array([r.cms_b1, r.cms_b2, r.cms_b3, r.cms_b0])
+                for r in fits.itertuples()}
+    else:
+        ours = {(r.sex, int(r.cohort)): to_cms_basis([r.g0_raw, r.g1_raw, r.g2_raw, r.g3_raw],
+                                                      int(r.cohort), awi)
+                for r in fits.itertuples()}
     cohorts = sorted({c for (s, c) in ours if (s, c) in cms and s == "male"})
     print(f"{args.fits}: full-span cohorts in both sources {cohorts[0]}-{cohorts[-1]} "
           f"({len(cohorts)} cohorts)")

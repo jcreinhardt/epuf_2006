@@ -17,7 +17,7 @@ SMM g strips out, so the two are on different LEVELS.  The gap is reported per b
     g0(--mode ols) = g0(--mode smm-mean) + eu_offset
 
 holds block by block to the SMM fit's own residual.  Two details make that exact rather than
-rough: E[u | .] varies with age, so it is PROJECTED onto the cubic basis and reduced to its
+rough: E[u | .] varies with age, so it is PROJECTED onto the polynomial basis and reduced to its
 constant term (a plain mean over ages is off by ~0.08); and it must be read at the INVERTED g,
 which is a fixed point solved by functional iteration on suffix-table lookups (reading it
 one-shot at the OLS g is off by 0.10-0.18, differently for men and women).  The offset is
@@ -62,7 +62,7 @@ def cms_basis(rel, ages):
     return np.linalg.lstsq(X, rel, rcond=None)[0]
 
 
-def fit_block(ages, target, cohort, awi, tables, degree=3):
+def fit_block(ages, target, cohort, awi, tables, degree=2):
     """One (sex, cohort) block; `target` holds all 10 moments.  Returns COLS[3:]."""
     jj = ages - E.AGES[0]
     X = E.basis(E.TC[jj], degree)
@@ -95,7 +95,7 @@ def fit_block(ages, target, cohort, awi, tables, degree=3):
             sd_gap, cens, *bc, float(b[0] - b_inv[0]), *E.pad(se))
 
 
-def solve_all(sel, min_ages, tables, awi, degree=3):
+def solve_all(sel, min_ages, tables, awi, degree=2):
     rows = [(label, c, ages.size, *fit_block(ages, target, c, awi, tables, degree))
             for label, c, ages, target in E.blocks(sel, min_ages)]
     for label in ("female", "male"):

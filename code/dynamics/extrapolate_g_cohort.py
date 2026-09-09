@@ -9,7 +9,7 @@ The taxable-earnings validation covers years 1937-2100 over ages 20-70, so it ne
 1937-70+25 = 1892 through 2100-20+25 = 2105 -- the defaults here.  The missing cohorts are
 filled by the standard anchor rule, per sex and per direction:
 
-  * SHAPE frozen at the nearest data edge: g1, g2, g3 (in t centred on age 40) are set to
+  * SHAPE frozen at the nearest data edge: g1, g2 (and g3, zero for the default quadratic; in t centred on age 40) are set to
     their mean over the `--anchor` edge cohorts (1957-61 backward, 1979-83 forward).  They
     carry no secular trend worth extrapolating, and a 5-cohort mean damps the cohort-level
     noise a single edge cohort would propagate to every extrapolated year.
@@ -112,23 +112,31 @@ def wage_log_index(y0, y1):
     return {y: W[y] for y in range(int(y0), int(y1) + 1)}
 
 
-def extrapolate(fit, W, c0, c1, n_anchor, ref_age, drift, const_g):
+def extrapolate(fit, W, c0, c1, n_anchor, ref_age, drift, const_g, beta=1.0):
     """One sex: DataFrame of centred (and raw) coefficients for every cohort in [c0, c1]."""
     fit = fit.sort_values("cohort").set_index("cohort")
     obs = fit.index.to_numpy(int)
     ref = {c: W[c + ref_age - 25] for c in range(c0, c1 + 1)}
     anchor = {"back": obs[:n_anchor], "fwd": obs[-n_anchor:]}
+    # a hinge-disciplined fit (--mode smm-p50) carries the out-of-span shape in extra
+    # columns; they are shape like g1..g3, so the same edge-freezing rule applies
+    cols = COEFS + [c for c in [*E.HINGES, "delta"] if c in fit.columns]
     rows = []
     for c in range(c0, c1 + 1):
         if c in obs:
-            rows.append([c, "fit", *fit.loc[c, COEFS].to_numpy(float)])
+            rows.append([c, "fit", *fit.loc[c, cols].to_numpy(float)])
             continue
         side = "back" if c < obs[0] else "fwd"
-        m = fit.loc[anchor[side], COEFS].mean()
-        shift = (ref[c] - np.mean([ref[a] for a in anchor[side]]) if drift == "index"
-                 else const_g * (c - float(np.mean(anchor[side]))))
-        rows.append([c, f"extrap_{side}", m["g0"] + shift, m["g1"], m["g2"], m["g3"]])
-    out = pd.DataFrame(rows, columns=["cohort", "source"] + COEFS)
+        m = fit.loc[anchor[side], cols].mean()
+        dW = ref[c] - np.mean([ref[a] for a in anchor[side]])
+        if drift == "index":
+            shift = dW                                   # g0 tracks the wage index 1:1
+        elif drift == "fitted":
+            shift = beta * dW                            # ... at the IN-SAMPLE slope instead
+        else:
+            shift = const_g * (c - float(np.mean(anchor[side])))
+        rows.append([c, f"extrap_{side}", m["g0"] + shift, *m[cols[1:]].to_numpy(float)])
+    out = pd.DataFrame(rows, columns=["cohort", "source"] + cols)
     raw = np.array([E.uncentre(r) for r in out[COEFS].to_numpy(float)])
     for k, name in enumerate(COEFS):
         out[f"{name}_raw"] = raw[:, k]
@@ -143,7 +151,16 @@ def main():
     ap.add_argument("--anchor", type=int, default=5, help="edge cohorts averaged")
     ap.add_argument("--ref-age", type=int, default=25,
                     help="age whose calendar year indexes the wage shift")
-    ap.add_argument("--drift", choices=["index", "const"], default="index")
+    ap.add_argument("--drift", choices=["index", "fitted", "const"], default="index",
+                    help="how g0 moves off the anchor. index: one for one with the real "
+                         "average covered wage -- the published wage path the aggregate "
+                         "benchmark is built on. fitted: at the slope actually estimated in "
+                         "sample, clipped to --beta-clip; men's raw slope is NEGATIVE, which "
+                         "is not credible extrapolated for a century, so the clip does real "
+                         "work and 0 means a flat real profile. const: one average log "
+                         "growth rate.")
+    ap.add_argument("--beta-clip", type=float, nargs=2, default=[0.0, 1.0],
+                    metavar=("LO", "HI"), help="bounds on the --drift fitted slope")
     ap.add_argument("--outdir", default=OUT)
     ap.add_argument("--tag", default="", help="suffix on the output file")
     args = ap.parse_args()
@@ -164,7 +181,12 @@ def main():
         g0 = f["g0"].to_numpy(float)
         print(f"  {sex:6s} slope {np.polyfit(w, g0, 1)[0]:+.3f}  corr {np.corrcoef(w, g0)[0, 1]:+.3f}"
               f"   g0 spread {np.ptp(g0):.3f} vs W spread {np.ptp(w):.3f}")
-        d = extrapolate(f, W, args.c0, args.c1, args.anchor, args.ref_age, args.drift, gbar)
+        raw_b = float(np.polyfit(w, g0, 1)[0])
+        b_hat = float(np.clip(raw_b, *args.beta_clip))
+        if args.drift == "fitted":
+            print(f"         drift slope: fitted {raw_b:+.3f} -> using {b_hat:.3f}")
+        d = extrapolate(f, W, args.c0, args.c1, args.anchor, args.ref_age, args.drift,
+                        gbar, b_hat)
         d.insert(0, "sex", sex)
         parts.append(d)
     tab = pd.concat(parts, ignore_index=True)

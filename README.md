@@ -141,11 +141,16 @@ epuf_2006/
 │       ├── gcohort_model.py               # GKOS process, simulation, suffix tables, the moment map (no plotting)
 │       ├── gcohort_ols.py                 # --mode ols: CMS's per-block OLS (reproduces their coefficients)
 │       ├── gcohort_smm.py                 # --mode smm-*: SMM with multi-step optimal weighting
+│       ├── gcohort_epuf.py               # --mode smm-p50: GKSW + EPUF medians, wedge, hinges
+│       ├── epuf_targets.py                # EPUF cohort × age medians, ages 20–70
+│       ├── relevel_g_cohort.py            # median for shape, mean for level
 │       ├── extrapolate_g_cohort.py        # extrapolate g(t) off the observed cohort range; price_index()
 │       └── plots/
 │           ├── plot_g_cohort.py           # coefficient paths by cohort, any fit/extrapolated CSVs overlaid
 │           ├── compare_g_cms.py           # fitted g vs CMS's published lifecycle profiles
 │           ├── plot_agg_tax_dynamics.py   # aggregate taxable earnings from the g(t) path vs ASS
+│           ├── plot_cohort_profile.py     # one cohort by age: model vs GKSW vs EPUF
+│           ├── plot_p50_fit.py            # both target sources, model median, model + δ
 │           ├── plot_cms_selection.py      # CMS's process as they coded it: the selection wedge
 │           └── plot_gkos_ordinal.py       # ordinal-transform invariance to g(t)
 ├── processed_data/
@@ -350,7 +355,8 @@ python code/dynamics/plots/plot_g_cohort.py output/dynamics/g_cohort_smm_mean.cs
 python code/dynamics/plots/plot_agg_tax_dynamics.py --profiles output/dynamics/g_cohort_smm_mean_extrapolated.csv
 ```
 
-Estimation CSVs land in `output/dynamics/`, every figure in `output/dynamics/plots/`.
+g(t) is quadratic by default (GKOS's own form); `--degree 3` is available but diverges outside
+the fitted 25–55 span. Estimation CSVs land in `output/dynamics/`, every figure in `output/dynamics/plots/`.
 `--mode ols` reproduces CMS's published `lifecycle_income_*.dta` coefficients to ~4e-6 on `sel3`.
 Its `g` is on a different **level** from the SMM modes — it absorbs the `E[u | u ≥ log(Ymin) − g]`
 term the SMM modes strip out — so it reports `eu_offset` per block, with

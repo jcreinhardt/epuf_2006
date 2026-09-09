@@ -4,9 +4,10 @@
 One script, three estimators of the same object.  Every other parameter of the GKOS (2021)
 benchmark process is held FIXED at the published estimate (gcohort_model.py); only
 
-    g(t) = g0 + g1*t + g2*t^2 + g3*t^3,      t = (age - 24)/10
+    g(t) = g0 + g1*t + g2*t^2 [+ g3*t^3],    t = (age - 24)/10
 
-is searched over, per (sex, cohort) block, against the published GKSW cohort x age files.
+is searched over (quadratic by default, GKOS's own form; --degree 3 adds the cubic term,
+which is written into the same 4-column layout), per (sex, cohort) block, against the published GKSW cohort x age files.
 
   --mode ols             CMS's estimator: per-block OLS of the published meanlog on an age
                          polynomial, no model inversion.  Seconds; needs replication_repos/CMS
@@ -16,6 +17,11 @@ is searched over, per (sex, cohort) block, against the published GKSW cohort x a
                          moment after nonemployment and the Ymin screen).
   --mode smm-quantiles   SMM on meanlog + p10/p25/p50/p75/p90/p98 with multi-step optimal
                          weighting.  Implementation for both: gcohort_smm.py.
+  --mode smm-p50         SMM on the MEDIAN of log earnings in TWO sources: GKSW ages 25-55
+                         and EPUF ages 20-70, bridged by a free wedge intercept and with
+                         one-sided hinges outside the GKSW span.  The only mode whose g is
+                         disciplined by data outside 25-55, where the others extrapolate
+                         blind.  Implementation: gcohort_epuf.py.
 
 --mode ols is on a different LEVEL from the SMM modes (its g absorbs the E[u | .] term they
 strip out; it reports the gap as `eu_offset`).  Slopes are the meaningful comparison.  The
@@ -49,14 +55,16 @@ def build_parser():
     ap = argparse.ArgumentParser(
         description="Estimate the cohort x sex lifecycle profile g(t) by OLS (CMS) or SMM.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    ap.add_argument("--mode", choices=("ols", "smm-mean", "smm-quantiles"),
+    ap.add_argument("--mode", choices=("ols", "smm-mean", "smm-quantiles", "smm-p50"),
                     default="smm-quantiles")
     ap.add_argument("--n", type=int, default=200_000, help="simulated individuals")
     ap.add_argument("--min-ages", type=int, default=31,
                     help="skip cohorts with fewer observed ages (31 = the full 25-55 span)")
     ap.add_argument("--sel", default="sel0", help="selection tag of the target file")
-    ap.add_argument("--degree", type=int, default=3, choices=[2, 3],
-                    help="2 restores GKOS's own quadratic g(t); 3 is the cubic")
+    ap.add_argument("--degree", type=int, default=2, choices=[2, 3],
+                    help="2 = GKOS's own quadratic g(t) (default); 3 = cubic, which fits 25-55 "
+                         "~0.006 better in rmse but diverges outside it (men's mean earnings "
+                         "at 70 reach $200k for cohort 1970)")
     ap.add_argument("--seed", type=int, default=20260821)
     ap.add_argument("--out", default=None, help="parameter CSV (default: per --mode)")
     ap.add_argument("--tag", default="", help="suffix on the output filename")
@@ -70,6 +78,8 @@ def build_parser():
                         "noise the asymptotic standard errors do NOT contain")
     g.add_argument("--shrink", type=float, default=0.10, help="shrinkage of S to its diagonal")
     g.add_argument("--jobs", type=int, default=8)
+    g.add_argument("--min-cell", type=int, default=500,
+                   help="smm-p50 only: smallest EPUF cell admitted as a target")
     return ap
 
 
@@ -107,6 +117,9 @@ def main(argv=None):
     print("=" * 30 + f" mode: {a.mode}", flush=True)
     if a.mode == "ols":
         run_ols(a, out)
+    elif a.mode == "smm-p50":
+        import gcohort_epuf
+        gcohort_epuf.run(a, out)
     else:
         import gcohort_smm
         gcohort_smm.run(a, out, SMM_MOMENTS[a.mode])

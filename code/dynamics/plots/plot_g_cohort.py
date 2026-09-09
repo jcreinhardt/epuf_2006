@@ -6,7 +6,7 @@ _extrapolated file -- and overlays them, one line per file.  For an extrapolated
 estimated cohorts are drawn as open markers and the two extrapolated tails as lines, kept
 apart so nothing falsely bridges the backward and forward anchors.  The shaded band marks
 the cohorts observed over the full 25-55 span, outside which any fitted polynomial is
-extrapolating.
+extrapolating.  g3 is identically zero for the default quadratic fits.
 
 Remember the level caveat: --mode ols sits ~0.36 log points above the SMM modes in g0 (it
 absorbs E[u | .]); the slopes are the comparable rows.

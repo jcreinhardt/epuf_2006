@@ -3,9 +3,10 @@
 Every parameter of the benchmark process (Table IV spec 6 + Table D.III) is held FIXED at
 the published estimate; only the coefficients of
 
-    g(t) = g0 + g1*t + g2*t^2 + g3*t^3,      t = (age - 24)/10
+    g(t) = g0 + g1*t + g2*t^2 [+ g3*t^3],    t = (age - 24)/10
 
-are estimated, separately per (sex, cohort) block, against the published cohort x age
+are estimated (quadratic by default; the cubic fits 25-55 slightly better and extrapolates
+far worse outside it), separately per (sex, cohort) block, against the published cohort x age
 moment files in raw_data/guv_quantiles/ (see `load_moments`).  This module is the LIBRARY
 shared by the estimators (gcohort_ols.py, gcohort_smm.py), the extrapolation and every
 figure script: the process, its simulation, the suffix tables that make the moment map
@@ -36,7 +37,7 @@ nonemployment shock puts the low mass at exactly zero, so dm/dg ~ 1.000 for ever
 moment and ~0 for the shape moments -- the shape moments cannot identify g.
 
 Cohort is indexed by the calendar year at age 25 (`cohort = yob + 25`, GKSW's convention),
-so year = cohort + age - 25 and each block is one diagonal of the APC plane.  The cubic is
+so year = cohort + age - 25 and each block is one diagonal of the APC plane.  The polynomial is
 estimated in t centred on age 40 (`T_CENTRE`), so g0 is the well-determined mid-career level;
 `uncentre` recovers raw-t coefficients, which the CSVs carry as g*_raw.
 
@@ -102,6 +103,54 @@ def gpoly(coef, tc):
     return g[0] if np.ndim(tc) == 0 else g
 
 
+SIM_AGES = np.arange(20, 71)                      # the panel the EPUF-disciplined mode needs
+KNOTS = (25, 55)                                  # the GKSW span; hinges vanish inside it
+
+
+def sim_jj(ages):
+    """Index of `ages` into a panel simulated over SIM_AGES."""
+    return np.asarray(ages, int) - SIM_AGES[0]
+
+
+def design(ages, degree=2, hinges=(False, False)):
+    """[1, tc, tc^2, ...] at `ages`, plus optional one-sided hinge columns at the GKSW edges.
+
+    The hinges are identically zero throughout 25-55, so they leave the in-span profile
+    exactly the fitted polynomial and are identified ONLY by the out-of-span EPUF cells --
+    which is what keeps adding those cells from disturbing the published-moment fit.  g stays
+    continuous at each knot and merely kinks there.
+    """
+    tc = tt(np.asarray(ages)) - T_CENTRE
+    cols = [basis(tc, degree)]
+    lo, hi = tt(KNOTS[0]) - T_CENTRE, tt(KNOTS[1]) - T_CENTRE
+    if hinges[0]:
+        cols.append(np.maximum(lo - tc, 0.0)[:, None])
+    if hinges[1]:
+        cols.append(np.maximum(tc - hi, 0.0)[:, None])
+    return np.hstack(cols)
+
+
+HINGES = ("h_young", "h_old")
+
+
+def g_at(coef, ages):
+    """g at `ages` from a mapping carrying g0..g3 and, optionally, h_young / h_old.
+
+    The one evaluator every consumer should use, so a fit with hinges and one without are
+    read the same way: each hinge term is zero throughout KNOTS, so a hinge-free fit gives
+    exactly the polynomial and a hinge-carrying one differs only outside 25-55.
+    """
+    get = coef.get if hasattr(coef, "get") else lambda k, d=0.0: coef[k] if k in coef else d
+    tc = tt(np.asarray(ages)) - T_CENTRE
+    g = basis(tc, 3) @ pad([get(f"g{k}", 0.0) for k in range(4)])
+    lo, hi = tt(KNOTS[0]) - T_CENTRE, tt(KNOTS[1]) - T_CENTRE
+    for name, col in zip(HINGES, (np.maximum(lo - tc, 0.0), np.maximum(tc - hi, 0.0))):
+        h = get(name, np.nan)
+        if h is not None and np.isfinite(h):
+            g = g + h * col
+    return g
+
+
 _m = T_CENTRE
 UNCENTRE = np.array([[1, -_m, _m**2, -_m**3], [0, 1, -2 * _m, 3 * _m**2],
                      [0, 0, 1, -3 * _m], [0, 0, 0, 1]], float)
@@ -130,9 +179,21 @@ def pce(year):
     return _PCE_GKSW[year - 1947]
 
 
+MW_YEARS = (1947, 2013)          # the span of GKSW's own minimum-wage matrix
+
+
 def ymin(year):
-    """The GKSW screen in BASE_YEAR dollars: 0.5 x 520 h x minimum wage, deflated."""
-    return sel0_threshold(year) * pce(BASE_YEAR) / pce(year)
+    """The GKSW screen in BASE_YEAR dollars: 0.5 x 520 h x minimum wage, deflated.
+
+    GKSW's minimum-wage matrix runs 1947-2013, but a cohort x age window wider than their
+    own 25-55 reaches past both ends (cohort 1970 at age 70 is 2015), so the year is CLAMPED
+    to the table rather than raising.  Safe because the screen is near non-binding at the
+    GKOS parameters -- max censored share ~0.001, since the nonemployment shock puts the low
+    mass at exactly zero rather than just above Ymin -- so the edge value changes no moment
+    materially.  One definition, here, rather than a clamp re-typed in each caller.
+    """
+    y = int(min(max(int(year), MW_YEARS[0]), MW_YEARS[1]))
+    return sel0_threshold(y) * pce(BASE_YEAR) / pce(y)
 
 
 # --- targets ----------------------------------------------------------------------
@@ -157,7 +218,7 @@ def load_moments(label, sel):
 
 def blocks(sel, min_ages):
     """Every (label, cohort, ages, target[n_ages x 10]) block with >= min_ages observed ages.
-    A cubic fitted to a short arc extrapolates wildly outside it, so the default keeps only
+    A polynomial fitted to a short arc extrapolates wildly outside it, so the default keeps only
     the full 25-55 span (cohorts 1957-1983)."""
     for label, _ in SEXES:
         tgt = load_moments(label, sel)
@@ -256,7 +317,7 @@ def model_meanlog(coef, jj, logym, tables):
     return np.array([gi + cond_mean(tables[j], ci - gi) for j, gi, ci in zip(jj, g, logym)])
 
 
-def fit_block(jj, logym, target, tables, start=G_START, degree=3):
+def fit_block(jj, logym, target, tables, start=G_START, degree=2):
     """Least squares of the published meanlog on the model moment over the first degree+1
     coefficients; the rest stay zero so every fit shares the 4-column layout."""
     res = least_squares(lambda c: model_meanlog(c, jj, logym, tables) - target,

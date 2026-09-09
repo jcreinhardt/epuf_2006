@@ -35,7 +35,8 @@ off 2006 after).  The BOTTOM row drops the cap -- model uncapped earnings agains
 aggearn_tot -- which is where tail-shape error shows, since a too-heavy upper tail still
 reproduces taxable earnings once clipped.
 
-Profiles are read from extrapolate_g_cohort.py's CSV, which by default already spans the
+Profiles are read from extrapolate_g_cohort.py's CSV (the quadratic SMM fit by default: the
+cubic fits 25-55 a little better and diverges outside it), which by default already spans the
 cohorts a 1937-2100 x 20-70 window needs (1892-2105); the script refuses a narrower file.
 
     python code/dynamics/plots/plot_agg_tax_dynamics.py [--profiles CSV] [--ages 20 70]
@@ -63,7 +64,7 @@ import extrapolate_g_cohort as X
 
 DB = "processed_data/ssa.duckdb"
 OUT = "output/dynamics/plots"
-PROFILES = "output/dynamics/g_cohort_smm_quantiles_quad_extrapolated.csv"
+PROFILES = "output/dynamics/g_cohort_smm_quantiles_extrapolated.csv"
 
 Y0, Y1 = X.Y0, X.Y1
 COMP_LO, COMP_HI = 15, 77          # EPUF ages the composition is built over (99.9% of earnings)
@@ -185,13 +186,24 @@ def load_profiles(path, c0, c1):
     if missing:
         sys.exit(f"{path} lacks cohorts {missing[0]}..{missing[-1]}; re-run "
                  f"extrapolate_g_cohort.py with --c0 {c0} --c1 {c1} (its defaults)")
-    return {(r.sex, int(r.cohort)): np.array([r.g0, r.g1, r.g2, r.g3]) for r in d.itertuples()}
+    keep = [c for c in ["g0", "g1", "g2", "g3", *E.HINGES, "delta"] if c in d.columns]
+    return {(r.sex, int(r.cohort)): {k: getattr(r, k) for k in keep} for r in d.itertuples()}
 
 
-def model_aggregate(prof, tables, taxmax, P, comp, cov, years, ages):
+def model_aggregate(prof, tables, taxmax, P, comp, cov, years, ages, universe="epuf"):
     """Per year: model aggregate taxable and uncapped earnings ($M) over covered workers in
-    the modelled age window."""
-    tc = E.tt(ages) - E.T_CENTRE
+    the modelled age window.
+
+    WHICH POPULATION the profile describes matters here and is not a detail.  A --mode smm-p50
+    fit carries `delta`, the EPUF-minus-GKSW wedge: g alone reproduces GKSW's commerce-and-
+    industry medians, g + delta reproduces EPUF's.  The benchmark on this figure is ASS
+    aggregate covered earnings over ALL covered workers, which is EPUF's universe, not GKSW's
+    -- so `universe="epuf"` (the default where delta exists) is the like-for-like choice, and
+    it removes the composition wedge that made every earlier mode overshoot.  Fits without a
+    delta column are unaffected.
+    """
+    off = {k: (v.get("delta", 0.0) if universe == "epuf" else 0.0) for k, v in prof.items()}
+    gtab = {k: E.g_at(v, ages) + off[k] for k, v in prof.items()}   # once per profile
     agg, unc = {}, {}
     for y in years:
         tax_sum = unc_sum = 0.0
@@ -200,7 +212,7 @@ def model_aggregate(prof, tables, taxmax, P, comp, cov, years, ages):
                 w = cov[y] * comp[y].get((sexcode, age), 0.0)
                 if w <= 0:
                     continue
-                g = E.gpoly(prof[(sexname, y - age + 25)], tc[j]) + np.log(P[y])  # -> nominal
+                g = gtab[(sexname, y - age + 25)][j] + np.log(P[y])          # -> nominal
                 v, csum, n = tables[j]
                 k = int(np.searchsorted(v, np.log(taxmax[y]) - g))
                 tax_sum += w * (np.exp(g) * csum[k] + taxmax[y] * (n - k)) / n
@@ -302,6 +314,11 @@ def main():
     ap.add_argument("--export", default=None,
                     help="also write the model aggregate to this CSV, for "
                          "cross_sections/plots/plot_agg_tax_total.py --gkos")
+    ap.add_argument("--universe", choices=["epuf", "gksw"], default="epuf",
+                    help="which population the profile should describe. A --mode smm-p50 fit "
+                         "carries the EPUF-vs-GKSW wedge as `delta`; the ASS benchmark here "
+                         "is all covered workers, EPUF's universe, so the default adds it. "
+                         "No effect on a fit without that column.")
     ap.add_argument("--renorm-comp", action="store_true",
                     help="renormalise the (sex, age) composition WITHIN the modelled ages so "
                          "the model's worker total equals the published covered-worker total. "
@@ -328,7 +345,8 @@ def main():
     comp = composition(cells, years, lo, hi, args.renorm_comp)
     cov_per, cov_prof = coverage(cells, lo, hi)
     tables = exp_tables(E.simulate_u(np.random.default_rng(args.seed), args.n, ages))
-    agg, unc = model_aggregate(prof, tables, taxmax, P, comp, cov, years, ages)
+    agg, unc = model_aggregate(prof, tables, taxmax, P, comp, cov, years, ages,
+                               args.universe)
 
     bench = {**trpay, **ass_tax}
     ass_last = max(ass_tax)
