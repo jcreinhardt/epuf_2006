@@ -50,7 +50,8 @@ span. Run in order — the second reads the first's CSV:
 Per year the objective is
 
 ```
-J = Sum_c [ (1-lam) negll_c + lam n_c Q_c ]  +  eta Sum_c w_c E[X]_c  +  rho Sum_a huber(sqrt(Omega) D2 g_a)
+J = Sum_c [ (1-lam) ( negll_c + eta w_c E[X]_c ) + lam n_c Q_c ]
+  + rho Sum_{a not free} || sqrt(Omega) D2 g_a ||^2
 ```
 
 - `negll` (`obj_mle.py`) — the doubly censored EPUF likelihood.
@@ -58,7 +59,13 @@ J = Sum_c [ (1-lam) negll_c + lam n_c Q_c ]  +  eta Sum_c w_c E[X]_c  +  rho Sum
   **shape only**: the level direction is projected out (see below). Cells with no guv
   counterpart carry the likelihood alone, so the surface stays complete.
 - `eta` — the per-year aggregate-mean constraint against the published ASS benchmark.
-- `rho` — the robust roughness penalty along age.
+  **Note the parenthesis**: it is a constrained MLE convex-combined with the GMM criterion,
+  not a third term alongside. The pull is a statement about the level the *likelihood*
+  identifies, so it is weighted like the likelihood; outside the combination a guv cell would
+  feel it `(1−λ)⁻¹` harder than the MLE-only cell beside it, and one η would mean two
+  different things within a year. `--no-constrain` drops it.
+- `rho` — the quadratic roughness penalty along age, on the g slots selected by `--pen-slots`
+  (default all six), skipping the second differences exempted by `FREE_STEPS`.
 
 `--lam 0` is the pure censored MLE and reproduces the pipeline this replaces; `--lam 1` is
 rejected, because a shape-only criterion does not identify the level. Default `--lam 0.5`, the
@@ -90,6 +97,9 @@ the published concept clearing Ymin), so the model sees threshold `t−δ` and e
 # stage 1 — joint solve → cross_section_params_smoothed.csv
 #           (also writes the raw stage-0 fits to cross_section_params.csv, + both heatmap sets)
 python code/cross_sections/estimate_cross_sections.py [--lam L] [--jobs N] [--rho R] [--gmm-iters K]
+#   [--no-constrain]  drop the aggregate pull -> plot_agg_tax_total becomes an out-of-sample check
+#   [--pen-slots 0123]  penalize only the four functionals common to both sexes (see below)
+#   XS_FREE_STEPS=lo:hi  ages whose first difference is exempt from the penalty (default 62:67)
 # stage 2 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
 python code/cross_sections/extrapolate_params.py
 
@@ -217,12 +227,36 @@ same thing for both. **Every slot is closed form** (Normal-Laplace cumulants; no
 central moments; mean excess at the cap): g is evaluated inside every objective evaluation, and
 quantile-based functionals needing CDF bisection cost ~30× more.
 
-The roughness operator is a **robust (Huber) second difference** along age. Basin-hopping is
-already handled by g + Viterbi, so the operator's job is to protect *genuine* regime switches
-(retirement, young-age entry): a quadratic ‖Dg‖² charges a true step quadratically and smears it,
-while the Huber loss crushes sawtooth but lets a sparse, isolated jump through at ~linear cost.
-It is location-free — no cutoff to hard-code, and the year-varying retirement age is handled
-automatically.
+The roughness operator is a **plain quadratic second difference** along age, with a named
+exemption window. It used to be a Huber loss, which was location-free: it crushed sawtooth while
+letting *any* sparse isolated jump through at ~linear cost, so genuine regime switches survived
+wherever they fell. A quadratic charges a true step quadratically and smears it, so breaks now
+have to be named — `FREE_STEPS` (env var `XS_FREE_STEPS`, default `62:67`) drops every second
+difference straddling a step into ages 62–67, from the penalty, from Ω's estimation, and from
+the Viterbi cost.
+
+**Why a window and not age 65.** On the unsmoothed fits the drop in `E logY` spans 62–70 against
+a ~−0.035/yr baseline, and the largest single step is at **66** (men −0.199, women −0.213), not
+65 (−0.161 / −0.124). And `D²` charges *curvature*, not slope, so a steady retirement decline is
+nearly free already; what it charges is the two **corners** where the decline starts and stops,
+which sit at 63 (+0.103) and 66 (+0.109) — one year after each Social Security threshold (62
+early eligibility, 65 full), the lag a mid-year retirement produces as a partial year followed by
+a full one. Exempting 65 alone would have missed both. The cost of the switch: **young-age entry
+at 16–19** is the other sharp break the fits show (age 16 is 2.9× median roughness for men, 9.8×
+for women) and it is *not* exempt, so it is now smoothed through.
+
+Under a quadratic the Gauss–Seidel pull is **exact rather than an IRLS surrogate** — holding the
+neighbours fixed, the penalty in `g_a` is exactly `4ρΩ(g_a − (g_m+g_p)/2)²` — so nothing in
+`smooth_pen` depends on the current `g_a`.
+
+**Which slots to penalize was tested, not assumed.** `--pen-slots 0123` restricts the penalty to
+the four functionals common to both families, excluding slots 4–5 (`log β`/`log α` for men, mean
+excess either side of the cap for women). Measured at λ=0.5: men's α comes out **28% rougher**
+along age with visible high-α speckle, β improves (0.65×) because the same penalty budget over
+four slots raises ρ₀, and **women are unchanged** (all five parameters within 1–10%, the two
+surfaces visually identical). The aggregate is also marginally worse — 8 years left at η=0 versus
+4, min ratio 0.990 versus 0.994. So the default stays all six: nothing gained for women, and the
+one men's parameter that most needs borrowing strength gets worse.
 
 The models live in `code/cross_sections/xs_model.py` — the dPlN (men, double Pareto-lognormal
 via the Normal-Laplace) and the two-component lognormal mixture (women) — and the single fitter

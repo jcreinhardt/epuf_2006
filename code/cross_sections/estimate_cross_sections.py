@@ -5,25 +5,33 @@ along age, and pins the year's aggregate to the published benchmark.
 Per (year, sex, single-year age) cell the objective is a convex combination of the two data
 terms, and the year's objective adds a roughness penalty coupling neighbouring ages:
 
-    J_year(theta) = Sum_c [ (1-lam) negll_c + lam n_c Q_c ]          <- data
-                  + rho Sum_a huber( sqrt(Omega) D2 g_a )            <- roughness along age
+    J_year(theta) = Sum_c [ (1-lam) ( negll_c + eta w_c E[X]_c ) + lam n_c Q_c ]   <- data
+                  + rho Sum_{a not free} || sqrt(Omega) D2 g_a ||^2            <- roughness
 
   negll   obj_mle    doubly censored EPUF likelihood (dPlN men, lognormal mixture women)
   Q       obj_gmm    SHAPE-ONLY GMM criterion on the published GKSW targets, level projected out
-  g       xs_model   the 6 regime-invariant functionals the penalty acts on
+  E[X]    xs_model   analytic uncapped mean; w_c the cell's share of the year's workers
+  g       xs_model   the 6 functionals the roughness penalty acts on (see below)
 
-THAT IS THE WHOLE ESTIMATOR. Nothing pins the year's aggregate to the published ASS series:
-the level comes from the EPUF likelihood, which is what identifies it, and the published
-aggregate is left free to serve as OUT-OF-SAMPLE VALIDATION. Pinning it would make the
-uncapped row of plot_agg_tax_total a tautology -- the model agreeing with the number it was
-fitted to -- and that row is the main end-to-end check this section has.
+A CONSTRAINED MLE convex-combined with the GMM criterion -- note where the parenthesis falls.
+The aggregate pull sits INSIDE the likelihood term, because it is a statement about the level
+the likelihood identifies, and so must be weighted like the likelihood. Placed outside instead,
+a guv cell feels the pull (1-lam)^-1 harder than the MLE-only cell beside it, since only the
+former's likelihood is discounted -- eta then means two different things within one year while
+the root-find reports a single number.
 
-`--constrain` restores the per-year aggregate-mean pull (`+ eta Sum_c w_c E[X]_c`, one scalar
-eta per year root-found so the composition-weighted uncapped mean hits the ASS benchmark). It
-is retained for two reasons and is not the default: it is the only way to reproduce the
-pre-2026-09 canonical surface, and at `--lam 0 --constrain` this module reproduces the
-crosssec_mle pipeline it replaced. Read solve_eta before using it -- eta >= 0 only, and
-interacts with rho through Jensen.
+WHAT EACH INSTRUMENT IS FOR. The censored likelihood identifies the body from EPUF. The GKSW
+targets pin SHAPE only (obj_gmm projects the level direction out), because their W-2 earnings
+concept differs from EPUF covered earnings and efficient weighting would make that wedge bind
+at ~10 sd of meanlog, beating eta. eta pins the year's LEVEL against the published ASS
+aggregate, which the likelihood cannot supply where the cap is tight: in 1951-56, 70-75% of
+men aged 40 sit above the taxable maximum, the likelihood sees little more than how MANY
+exceeded it, and E[X] ~ alpha/(alpha-1) is nearly all tail. Measured, with the pull removed,
+those years run 1.4-2.5x the published aggregate while 1980+ lands within 1-3% unaided.
+
+The cost is that plot_agg_tax_total's uncapped row is then partly a restatement of the fit
+rather than a check of it, in exactly the years where eta binds. `--no-constrain` recovers the
+honest version, and 1980+ is where to read it.
 
 lam = 0 is the pure censored MLE (and reproduces the pipeline this module replaces); lam = 1
 would be pure GMM, which does NOT identify the level -- obj_gmm projects that direction out
@@ -106,8 +114,8 @@ NG         = 6                  # length of the functional vector g
 # slots, E[X] is exponential in them, so by Jensen the year's aggregate mean is biased DOWN,
 # and eta > 0 can only thin -- so rho had to stay small enough that the smoothed fit still
 # OVERSHOT the benchmark. That ceiling is gone with the constraint off by default, and the
-# binding limit is now only smearing genuine regime switches, which the Huber loss already
-# protects against. The predecessor GMM module ran 1e-3 for exactly this reason. Re-sweep with
+# binding limit is now only smearing genuine regime switches -- and with the Huber loss gone,
+# only the named FREE_STEPS window is protected from that. The predecessor GMM module ran 1e-3 for exactly this reason. Re-sweep with
 # --smooth-frac before trusting the smoothed surface; judge on the heatmaps and on
 # plot_agg_tax_total, which is now an independent check rather than a restatement of the fit.
 SMOOTH_FRAC = 1e-4
@@ -119,8 +127,47 @@ CONT_PASSES  = int(os.environ.get("XS_CONT_PASSES", "2"))
 ETA_PASSES   = int(os.environ.get("XS_ETA_PASSES", "3"))
 BISECT_ITERS = 18               # bisection steps for eta
 GS_TOL     = 1e-3               # early-stop a pass sweep: max |dg| across cells
-HUBER_K    = 1.5                # Huber knee, in standardized (Omega-scaled) roughness units
 STAGE4     = 2                  # max basin re-check rounds
+# Steps into these ages (inclusive) are EXEMPT from the roughness penalty -- the retirement
+# transition, which is a real feature of the profile and not something to smooth away.
+#
+# It is a WINDOW, not the single age 65, because that is what the unsmoothed fits show. The
+# drop in E logY spans 62-70 against a baseline of ~-0.035/year, and the largest single step
+# is at 66 (men -0.199, women -0.213), not 65 (-0.161 / -0.124). D2 charges CURVATURE, not
+# slope, so a steady retirement decline is nearly free already; what it charges is the two
+# CORNERS where the decline starts and stops, and those sit at 63 (+0.103) and 66 (+0.109) --
+# one year after each Social Security threshold (62 early eligibility, 65 full), the lag a
+# mid-year retirement produces as a partial year followed by a full one. Exempting 65 alone
+# would have missed both.
+#
+# Env var, not a CLI flag: the year workers are SPAWNED, so a global rebound in main() never
+# reaches them. Format "lo:hi"; set XS_FREE_STEPS=":" to penalize everything.
+def _parse_free_steps(spec):
+    """"lo:hi" -> (lo, hi); ":" -> None, meaning penalize every second difference.
+
+    Validated at import so a malformed XS_FREE_STEPS fails here, with the offending value in
+    hand, rather than as an unpacking error inside a spawned worker three minutes in."""
+    if spec == ":":
+        return None
+    try:
+        lo, hi = (int(v) for v in spec.split(":"))
+    except ValueError:
+        raise SystemExit(f'XS_FREE_STEPS must be "lo:hi" or ":", got {spec!r}') from None
+    if lo > hi:
+        raise SystemExit(f"XS_FREE_STEPS lo must not exceed hi, got {spec!r}")
+    return lo, hi
+
+
+FREE_STEPS = _parse_free_steps(os.environ.get("XS_FREE_STEPS", "62:67"))
+
+
+def free_d2(a):
+    """Is the second difference CENTRED at age a exempt? D2(a) = step(a+1) - step(a), so it
+    straddles an exempt step whenever either of those two steps is in the window."""
+    if FREE_STEPS is None:
+        return False
+    lo, hi = FREE_STEPS
+    return lo - 1 <= a <= hi
 # L-BFGS-B stopping. COLD (fresh multi-start) is thorough; WARM (an inner-loop solve seeded
 # from the previous state) starts near-optimal, so a loose gtol stops it in 1-2 iterations --
 # the joint solve calls it tens of times per cell. Both are calibrated to SUMMED-likelihood
@@ -205,18 +252,25 @@ def fit_cell(sex, x, lowc, highc, start=None, gmm=None, mean_pen=None, smooth_pe
     gf = GFUN[sex]
 
     def obj(theta):
-        val = (1.0 - lam) * negll(theta) if qfun is not None else negll(theta)
-        if qfun is not None:
-            q = qfun(theta)
-            if not np.isfinite(q):
-                return 1e18
-            val += lam * n * q
+        # The aggregate pull rides INSIDE the likelihood term, not alongside the composite.
+        # It is a statement about the level the LIKELIHOOD identifies, so it must be weighted
+        # like the likelihood: at (1-lam)(negll + eta w E[X]) + lam n Q every cell feels the
+        # same pull relative to its own likelihood, guv or not. Adding it outside instead makes
+        # a guv cell feel it (1-lam)^-1 times harder than its neighbour -- the likelihood is
+        # discounted there and the pull is not -- so eta would mean two different things within
+        # one year while the root-find reports one number.
+        val = negll(theta)
         if mean_pen is not None:
             eta, w = mean_pen
             mth = cell_mean(sex, theta)
             if not np.isfinite(mth):
                 return 1e18
             val += eta * w * mth
+        if qfun is not None:
+            q = qfun(theta)
+            if not np.isfinite(q):
+                return 1e18
+            val = (1.0 - lam) * val + lam * n * q
         if smooth_pen is not None:
             wv, gt = smooth_pen
             d = gf(theta, thi) - gt
@@ -274,22 +328,30 @@ def cells_by_age(df, min_n=MIN_N):
 
 
 # --------------------------------------------------------------------------- stage 0
+def data_term(row, theta, gmm):
+    """A cell's contribution to the year's objective, in summed units -- what Viterbi prices
+    against rho x roughness. ONE definition: stage 1 and the stage-4 re-check must rank basins
+    by the same cost, or the re-check can adopt a basin that fits the likelihood better and the
+    published targets far worse, which is exactly the move stage 4 exists to prevent."""
+    val = row["negll"]
+    if gmm is None:
+        return val
+    lam, qfun = gmm[0], gmm[1]
+    q = qfun(theta)
+    return (1.0 - lam) * val + lam * row["n"] * q if np.isfinite(q) else np.inf
+
+
 def _candidates(sex, x, lowc, highc, logcap, gmm, seeds):
     """Top-K optima kept per cell, DEDUPED IN g-SPACE. Raw-parameter distance is meaningless
     across a regime flip -- the mixture's components swap roles, the dPlN trades body against
     tail -- so a theta-space dedupe keeps K copies of one basin while believing they differ.
     The stored `data` is the cell's contribution to the joint objective in summed units, which
     is what Viterbi prices against rho x roughness."""
-    lam, qfun = gmm if gmm is not None else (0.0, None)
     ent = []
     for s in seeds:
         row, th = fit_cell(sex, x, lowc, highc, start=s, gmm=gmm)
-        if qfun is None:
-            data = row["negll"]
-        else:
-            q = qfun(th)
-            data = (1.0 - lam) * row["negll"] + lam * row["n"] * q if np.isfinite(q) else np.inf
-        ent.append(dict(theta=th, negll=float(data), g=GFUN[sex](th, logcap), row=row))
+        ent.append(dict(theta=th, negll=float(data_term(row, th, gmm)),
+                        g=GFUN[sex](th, logcap), row=row))
     uniq = []
     for e in sorted(ent, key=lambda e: e["negll"]):
         if all(np.linalg.norm(e["g"] - u["g"]) > DEDUPE for u in uniq):
@@ -357,17 +419,24 @@ def stage0_year(args):
 def second_diffs(g_by_age, ages):
     """Row-stacked second differences g[a+1]-2g[a]+g[a-1] over the interior ages."""
     return np.array([g_by_age[ages[i + 1]] - 2 * g_by_age[ages[i]] + g_by_age[ages[i - 1]]
-                     for i in range(1, len(ages) - 1)]) if len(ages) >= 3 else np.empty((0, NG))
+                     for i in range(1, len(ages) - 1)
+                     if not free_d2(ages[i])]) if len(ages) >= 3 else np.empty((0, NG))
 
 
-def freeze_omega_rho(metas, smooth_frac):
+def freeze_omega_rho(metas, smooth_frac, pen_slots=None):
     """Freeze, once and GLOBALLY, from the stage-0 fits:
       Omega_j = 1/MAD_a[(Dg)_j]^2   (per sex, pooled over the whole grid), and
       rho0 in per-observation units so the penalty is worth ~smooth_frac of the fit at the
       unsmoothed solution: rho0 = smooth_frac * (total data term) / Sum_year ntot * roughness.
     Global, not per-year, so one rho means the same thing everywhere -- which is also why a
-    single-year run cannot reproduce a full run's surface. The robust (Huber) roughness keeps
-    a few genuine regime jumps from inflating rho0."""
+    single-year run cannot reproduce a full run's surface.
+
+    Omega stays MAD-based, which is the only robustness left now that the loss is quadratic --
+    without it the few huge second differences (men's log alpha, the 16-19 entry ages) would set
+    the scale for every slot. rho0 itself is no longer protected: a quadratic charges those
+    outliers in full, which inflates the roughness P1 in the denominator and pushes rho0 DOWN,
+    while exempting FREE_STEPS removes the retirement jumps and pushes it back UP. The two act
+    in opposite directions, so re-read the printed rho0 rather than assuming it carried over."""
     Dg = {sex: [] for sex in SEXES}
     for m in metas:
         for sex in SEXES:
@@ -380,6 +449,14 @@ def freeze_omega_rho(metas, smooth_frac):
         D = np.vstack(Dg[sex]) if Dg[sex] else np.ones((1, NG))
         mad = np.median(np.abs(D - np.median(D, axis=0)), axis=0) * 1.4826
         Omega[sex] = 1.0 / np.maximum(mad, 1e-6) ** 2
+        if pen_slots is not None:                    # restrict which g slots are smoothed
+            keep = np.zeros(NG, dtype=bool)
+            keep[list(pen_slots)] = True
+            Omega[sex] = np.where(keep, Omega[sex], 0.0)
+    # Zeroing Omega is all it takes: roughness, smooth_pen and the Viterbi cost all reach the
+    # penalty through it, so an excluded slot contributes no cost and exerts no pull. rho0 is
+    # calibrated AFTER the mask, off the masked roughness, so the penalty is still worth
+    # smooth_frac of the fit -- the same budget spread over fewer slots, not a smaller budget.
     data_tot, P1 = 0.0, 0.0
     for m in metas:
         for sex in SEXES:
@@ -391,46 +468,61 @@ def freeze_omega_rho(metas, smooth_frac):
 
 
 # --------------------------------------------------------------------------- penalty pieces
-def _huber_terms(r, omega):
-    """Standardized roughness u = sqrt(Omega)*r and its Huber value + IRLS weight."""
+def rough_terms(r, omega):
+    """Standardized roughness u = sqrt(Omega)*r, returned as its quadratic value u^2.
+
+    This replaced a Huber loss. The Huber was location-free: it crushed sawtooth while letting
+    ANY sparse, isolated jump through at ~linear cost, so genuine regime switches survived
+    wherever they happened to be. A quadratic charges a true step quadratically and will smear
+    it, so the breaks now have to be named -- which is what FREE_STEPS does for the retirement
+    transition. Anything comparably sharp that is NOT in that window (young-age entry at 16-19
+    is the other candidate the fits show) is now smoothed through. That is the trade: implicit,
+    automatic robustness exchanged for an explicit, auditable exemption."""
     u = np.sqrt(omega) * r
-    au = np.abs(u)
-    val = np.where(au <= HUBER_K, u * u, HUBER_K * (2 * au - HUBER_K))
-    hw = np.where(au <= HUBER_K, 1.0, HUBER_K / np.maximum(au, 1e-12))
-    return val, hw
+    return u * u
 
 
 def roughness(g_by_age, ages, omega):
-    """rho-free robust roughness Sum_a Sum_j huber(sqrt(Omega_j)(Dg)_{a,j}) -- the Viterbi core.
+    """rho-free roughness Sum_{a not free} Sum_j Omega_j (Dg)_{a,j}^2 -- the Viterbi cost core.
 
-    The operator is a ROBUST (Huber) second difference along age, and the robustness is the
-    point: basin-hopping is already handled by g plus Viterbi, so this operator's remaining job
-    is to protect GENUINE regime switches (retirement, young-age entry). A quadratic ||Dg||^2
-    charges a true step quadratically and smears it; the Huber loss crushes sawtooth but lets a
-    sparse isolated jump through at ~linear cost. It is location-free -- no cutoff to hard-code,
-    and the year-varying retirement age is handled automatically."""
+    A plain quadratic second difference along age, with the retirement window exempted by
+    FREE_STEPS. Note what the operator does and does not charge: D2 is curvature, so a steady
+    decline costs almost nothing however steep, and the exemption is really buying the two
+    CORNERS at either end of the retirement drop rather than the drop itself."""
     tot = 0.0
     for i in range(1, len(ages) - 1):
+        if free_d2(ages[i]):
+            continue
         r = g_by_age[ages[i + 1]] - 2 * g_by_age[ages[i]] + g_by_age[ages[i - 1]]
-        tot += float(_huber_terms(r, omega)[0].sum())
+        tot += float(rough_terms(r, omega).sum())
     return tot
 
 
 def smooth_pen(sex_g, a, ages, omega, rho):
     """(wvec, target) for the Gauss-Seidel pull of cell a's g toward its second-difference
-    neighbour target -- the IRLS quadratic surrogate of the robust roughness. None at endpoints.
+    neighbour target. None at the endpoints and across the exempt retirement window.
+
+    Under a quadratic loss this is EXACT, not a surrogate: holding the neighbours fixed, the
+    penalty term centred at a is rho Sum_j Omega_j (g_p - 2 g_a + g_m)_j^2, which in g_a is
+    exactly 4 rho Omega_j (g_a - (g_m + g_p)/2)_j^2. The Huber version needed an IRLS reweight
+    read off the CURRENT residual; nothing here depends on the current g_a, which is one fewer
+    piece of state carried through the Gauss-Seidel sweep.
+
+    Note it uses only the second difference CENTRED at a, though g_a also enters those centred
+    at a +/- 1. That is the same coordinate-descent approximation the penalty has always made;
+    the sweeps recover the coupling.
 
     All g slots are pulled equally. Restricting the pull to the body (zeroing the upper-tail
     slot, on the theory that the mean constraint should own what the cap censors) was tried and
     made the aggregate-mean bias slightly WORSE -- the bias is not a tail effect, it is Jensen
-    acting on every smoothed log-scale slot at once."""
+    acting on every smoothed log-scale slot at once. `--pen-slots` is the general form of that
+    experiment; on 0123 men's alpha comes out 28% rougher and women are unchanged, so the
+    default stays all six."""
     i = ages.index(a)
-    if i == 0 or i == len(ages) - 1:
+    if i == 0 or i == len(ages) - 1 or free_d2(a):
         return None
     gm, gp = sex_g[ages[i - 1]], sex_g[ages[i + 1]]
-    r = gp - 2 * sex_g[a] + gm            # current second difference at a
-    hw = _huber_terms(r, omega)[1]
-    return 4.0 * rho * hw * omega, 0.5 * (gm + gp)
+    return 4.0 * rho * omega, 0.5 * (gm + gp)
 
 
 # --------------------------------------------------------------------------- Viterbi
@@ -451,8 +543,9 @@ def viterbi(cands, ages, omega, rho):
         bk = np.zeros((K, Kp), dtype=int)
         for j in range(K):
             for l in range(Kp):
-                cost = np.array([dp[i, j] + rho * float(_huber_terms(
-                    G[ap][l] - 2 * G[a][j] + G[am][i], omega)[0].sum()) for i in range(Km)])
+                pen = 0.0 if free_d2(a) else rho
+                cost = np.array([dp[i, j] + pen * float(rough_terms(
+                    G[ap][l] - 2 * G[a][j] + G[am][i], omega).sum()) for i in range(Km)])
                 bk[j, l] = int(np.argmin(cost)); new[j, l] = cost[bk[j, l]] + node[ap][l]
         dp, _ = new, back.append(bk)
     j, l = np.unravel_index(int(np.argmin(dp)), dp.shape)
@@ -609,7 +702,13 @@ def solve_year(args):
                                  gmm=gmm_arg(sex, a), mean_pen=(eta, w))
                         for c in cand[sex][a]]
                 nsolve[0] += len(fits)
-                rc[a] = [dict(theta=th, negll=r["negll"], g=GFUN[sex](th, logcap), row=r)
+                # Node cost is the DATA term only -- the same quantity stage 1 ranked by, so
+                # the two Viterbi passes are commensurable. Deliberately NOT including the
+                # eta*w*E[X] pull the refits above carry: that would let basin choice trade
+                # tail-thinness against roughness, which measurably moves the surface (eta by
+                # up to 25 in a year) and is a modelling change, not a consistency fix.
+                rc[a] = [dict(theta=th, g=GFUN[sex](th, logcap), row=r,
+                              negll=float(data_term(r, th, gmm_arg(sex, a))))
                          for r, th in fits]
             newsel = viterbi(rc, ages[sex], Omega[sex], rho_t)
             for a in ages[sex]:
@@ -648,10 +747,19 @@ def write_csv(path, rows):
 
 
 def main(jobs=None, lam=LAM, gmm_iters=GMM_ITERS, rho=None, rho_steps=RHO_STEPS,
-         smooth_frac=SMOOTH_FRAC, constrain=False, plots=True, raw=RAW, out=OUT):
+         smooth_frac=SMOOTH_FRAC, constrain=True, pen_slots=None, plots=True,
+         raw=RAW, out=OUT):
     if not 0.0 <= lam < 1.0:
         raise SystemExit("--lam must be in [0, 1): at lam = 1 the GMM criterion is shape-only "
                          "and does not identify the level (obj_gmm)")
+    # Checked HERE, not where it is used: pen_slots is not consumed until freeze_omega_rho,
+    # which runs after stage 0 -- so a typo would otherwise surface as an IndexError several
+    # minutes into a run.
+    if pen_slots is not None:
+        bad = sorted(set(pen_slots) - set(range(NG)))
+        if bad or not pen_slots:
+            raise SystemExit(f"--pen-slots must be a non-empty subset of 0..{NG - 1}, "
+                             f"got {bad or 'nothing'}")
     target = ass_uncapped_per_worker() if constrain else {}
     tgt = obj_gmm.guv_targets(YEARS) if lam > 0.0 else {}
     by_year = {y: {(s, a): v for (yy, s, a), v in tgt.items() if yy == y} for y in YEARS}
@@ -663,15 +771,18 @@ def main(jobs=None, lam=LAM, gmm_iters=GMM_ITERS, rho=None, rho_steps=RHO_STEPS,
         metas = list(ex.map(stage0_year, [(y, lam, gmm_iters, by_year[y]) for y in YEARS]))
     print(f"  {len(metas)} years, {time.time() - t0:.0f}s", flush=True)
 
-    Omega, rho0 = freeze_omega_rho(metas, smooth_frac)
+    Omega, rho0 = freeze_omega_rho(metas, smooth_frac, pen_slots)
     rho_t = rho0 if rho is None else rho
     rho_grid = list(np.geomspace(rho_t * RHO0_START, rho_t, rho_steps))
-    print(f"=== Omega frozen; rho0={rho0:.3g} target={rho_t:.3g} "
+    print(f"=== Omega frozen on g slots "
+          f"{''.join(str(j) for j in (pen_slots if pen_slots is not None else range(NG)))}; "
+          f"rho0={rho0:.3g} target={rho_t:.3g} "
           f"grid={[f'{r:.2g}' for r in rho_grid]} ===", flush=True)
 
     write_csv(raw, [r for m in metas for sex in SEXES for r in m["best_row"][sex].values()])
 
-    print("=== stages 1-4: joint smoothed-constrained solve ===", flush=True)
+    print(f"=== stages 1-4: joint smoothed solve"
+          f"{' + aggregate constraint' if constrain else ' (UNCONSTRAINED)'} ===", flush=True)
     args = [(m, Omega, rho_grid, target.get(m["year"]), lam, by_year[m["year"]]) for m in metas]
     rows, timing = [], []
     with ProcessPoolExecutor(max_workers=jobs) as ex:
@@ -716,10 +827,16 @@ def build_parser():
     ap.add_argument("--smooth-frac", type=float, default=SMOOTH_FRAC,
                     help="rho calibration: penalty as a fraction of the unsmoothed fit")
     ap.add_argument("--rho-steps", type=int, default=RHO_STEPS, help="rho-continuation steps")
-    ap.add_argument("--constrain", action="store_true",
-                    help="ALSO pin each year's uncapped aggregate mean to the ASS benchmark "
-                         "with a per-year eta. Off by default: the published aggregate is "
-                         "validation, not a target. See the module docstring.")
+    ap.add_argument("--no-constrain", action="store_true",
+                    help="drop the per-year aggregate-mean pull, leaving the level to the "
+                         "likelihood alone. Diagnostic: it makes plot_agg_tax_total an "
+                         "out-of-sample check, at the cost of the tight-cap years.")
+    ap.add_argument("--pen-slots", default=None,
+                    help="which g slots the roughness penalty acts on, as digits, e.g. 0123 "
+                         "for the four common functionals only (E logY, sd logY, skew logY, "
+                         "logit S(cap)) -- excluding slots 4-5, which are log-beta/log-alpha "
+                         "for men but mean excess either side of the cap for women. Default: "
+                         "all six.")
     ap.add_argument("--no-plots", action="store_true", help="skip the parameter heatmaps")
     ap.add_argument("--out", default=str(OUT), help="smoothed-surface CSV")
     ap.add_argument("--raw", default=str(RAW), help="raw stage-0 CSV")
@@ -729,5 +846,7 @@ def build_parser():
 if __name__ == "__main__":
     a = build_parser().parse_args()
     main(jobs=a.jobs, lam=a.lam, gmm_iters=a.gmm_iters, rho=a.rho, rho_steps=a.rho_steps,
-         smooth_frac=a.smooth_frac, constrain=a.constrain, plots=not a.no_plots,
+         smooth_frac=a.smooth_frac, constrain=not a.no_constrain,
+         pen_slots=(None if a.pen_slots is None else [int(c) for c in a.pen_slots]),
+         plots=not a.no_plots,
          raw=Path(a.raw), out=Path(a.out))

@@ -311,6 +311,7 @@ pins the level; see `CLAUDE.md` for why that separation is load-bearing.
 # stage 1 — joint solve over every (year, sex, age) cell with ≥1000 obs
 #           → cross_section_params_smoothed.csv, plus the raw stage-0 fits in cross_section_params.csv
 python code/cross_sections/estimate_cross_sections.py [--lam L] [--jobs N] [--rho R] [--gmm-iters K]
+#   --no-constrain drops the aggregate-mean pull; --pen-slots picks which g slots are smoothed
 # stage 2 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
 python code/cross_sections/extrapolate_params.py
 
