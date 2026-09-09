@@ -354,6 +354,73 @@ belongs in the location (ν) rather than the tail.
 
 `extract_table_4B1.py` has flags: `--no-duckdb` (write CSV only), `--html/--out/--duckdb/--table`.
 
+## Open items in the cross-section estimator
+
+Known-outstanding as of the 2026-09-09 restructure (`estimate_cross_sections.py`). None of
+these is a bug in what is committed; they are things measured-and-deferred, listed so a later
+session does not have to rediscover them. Roughly in order of how much they affect results.
+
+1. **`SMOOTH_FRAC = 1e-4` is stale, and so is the sweep table above it.** That value came from
+   a 5-point sweep of full re-solves done under the *Huber* loss and the *old* constraint
+   arrangement. Both changed. ρ₀ has since been observed at 7.12e-08 (Huber), 1.35e-08
+   (quadratic, six slots) and 2.15e-08 (quadratic, four slots) for the same `SMOOTH_FRAC`, so
+   the number no longer means what the table says. **Re-sweep before quoting the table or
+   trusting the smoothing strength.** ~5 full re-solves; budget ~28 min each with the
+   constraint on. The old ceiling argument (ρ capped because smoothing biases the aggregate
+   down by Jensen and η can only thin) still applies, so sweep upward with that in view.
+
+2. **The canonical CSVs under `output/` predate all of this** — they are pre-restructure,
+   pre-`ORDER BY`, Huber-penalty, and were produced by the deleted `crosssec_mle.py`. Every
+   number quoted from them in this file (the `0.9955 [0.969–1.004]` in-sample ratio, the 374
+   α≤1 cells) describes an estimator that no longer exists. Regenerate before relying on them.
+
+3. **Men's g slots 4–5 are raw parameters; women's are functionals.** `log β`/`log α` versus
+   mean excess either side of the cap — so the two sexes do not penalize the same object,
+   despite both docstrings claiming a common layout. Dropping them is *not* the fix (tested:
+   `--pen-slots 0123` makes men's α 28% rougher and changes women not at all). The fix is to
+   give the dPlN the same mean-excess form: `obj_gmm.nl_trunc_central` already returns the
+   Normal-Laplace truncated central moments in closed form, so the upper mean excess is a
+   direct call and the lower follows from the untruncated mean.
+
+4. **Young-age entry (16–19) is now smoothed through.** It is the sharpest break in the fits —
+   age 16 is 2.9× median roughness for men, 9.8× for women, larger than anything at
+   retirement — and the quadratic loss has no location-free robustness to protect it. Either
+   add a second exemption window or reconsider the `MIN_N` floor at those ages.
+
+5. **The aggregate constraint is one-sided: it enforces `E[X] ≤ target`, never `≥`.** Any year
+   whose model mean already sits below the benchmark gets η = 0 and is left as fitted. That is
+   forced by the linear pull — a negative η makes the objective unbounded below, since
+   `E[X] ∝ 1/(α−1)` diverges (measured: 1990 goes from 0.96× to 60,000× between η = −0.05 and
+   −0.1). A **quadratic** pull on the log mean, `η·w·(log E[X] − log target)²`, would be
+   bounded below in both directions and give a genuinely two-sided constraint — which would
+   also decouple ρ from the Jensen ceiling in item 1. Contained change to `fit_cell` and
+   `solve_eta`.
+
+6. **1951–56 have no GKSW targets at all** (they start in 1957), so those years are pure
+   censored MLE whatever `--lam` is, and they are exactly the years where the cap is tightest
+   (70–75% of men aged 40 above it). Unconstrained they run 1.4–2.5× the published aggregate.
+   η currently carries them. If pre-1957 uncapped means need to stand on their own, that needs
+   a different instrument, not a different λ.
+
+7. **The "7–10% GKSW concept wedge" claimed above is not what the data show.** `obj_gmm`'s
+   level projection reports δ̂ per cell (the `wedge` column) as a free byproduct. Measured on
+   the unconstrained λ=0.5 surface: **+1.4% (1980s), +1.4% (1990s), +2.7% (2000s)**, and
+   *negative* (−0.04 to −0.08) before 1980 — though the early decades are confounded, because
+   the model's own level is running hot there. The trustworthy decades are the post-1980 ones
+   and they say the wedge is far smaller than documented. Worth reconciling against the source
+   of the 7–10% figure before either number is used.
+
+8. **`project=False` is untested in production.** The level projection exists so GKSW's level
+   cannot beat η. Both are now active, so the rationale holds — but with η carrying the level
+   anyway it is worth measuring whether letting GKSW speak to the level too (its p98 sits
+   4–5.6× above the cap in the tight-cap years, i.e. real tail information the microdata
+   cannot have) helps 1957+. Needs a CLI flag; `obj_gmm.make_qfun` already takes the argument.
+
+9. **The guv-only years 2007–13 are not fit.** The predecessor `crosssec_gmm.py` fit them by
+   pure GMM. With a shape-only criterion that no longer identifies their level, so they would
+   need η against the ASS benchmark on borrowed 2006 composition. Currently they fall to
+   `extrapolate_params.py`'s wage-index shift instead.
+
 ## Architecture
 
 - **Code and outputs are organized into four parallel sections**, each a subfolder of
