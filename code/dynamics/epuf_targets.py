@@ -18,6 +18,19 @@ skewed, unsurprising since GKOS target skewness of earnings CHANGES), a discrepa
 EPUF p50 would force the wedge intercept to absorb that trend, and a constant cannot, so the
 residual would land in the out-of-span shape -- exactly what the EPUF block exists to measure.
 
+HOW BADLY, measured.  One g satisfying both blocks forces the identity
+
+    delta(a) = EPUF p50(a) - GKSW meanlog(a) + [model mean(a) - model median(a)],
+
+so delta's age slope IS the bias a constant pushes into the hinges.  Over the 31-age overlap
+that slope is -0.043/decade for men and -0.039 for women (sd 0.045, 0.048), against -0.004 and
+-0.007 (sd 0.022, 0.027) for the like-to-like median wedge this module actually uses -- ten
+times less flat.  Fitted at the in-span mean age it misstates the requirement by -0.128 log
+points at age 70 and +0.085 at age 20 (men).  The whole estimated old-age hinge is worth -0.125
+log points at 70 for men, so the bias would be the SIZE OF THE SIGNAL.  The driver is not mainly
+the model: the data's own mean-minus-median shrinks from -0.195 at age 25 to -0.100 at 55 while
+the model's sits flat near +0.03, so the mixed design asks a constant to track a moving target.
+
 THE SCREEN IS GKSW'S OWN, applied to EPUF: keep earnings >= 0.5 x 520 h x minimum wage in
 nominal dollars (`guv_targets.sel0_threshold`, the ONE definition), so the truncation is the
 same on both blocks and the same model cut log(Ymin) - g(t) serves both.  Earnings are then
