@@ -45,9 +45,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
-from plot_agg_tax_total import (MUSD, ass_taxable, ass_workers, combined_benchmark,
-                                model_means, taxmax_series, trustees,
-                                C_BENCH, C_MODEL)
+from benchmarks import MUSD, ass_taxable, ass_workers, combined_benchmark, trustees
+from aggregates import model_means, taxmax_series
+from plot_agg_tax_total import C_BENCH, C_MODEL      # figure palette only
 
 VU_DATA = Path("/Users/jr2728/Dropbox/GZ SSec RA share 2023-present/"
                "project_vu - Copy (2)/data/intermediate")

@@ -46,22 +46,60 @@ Run cross-sectional distribution fits (per year × sex × single-year-age earnin
 distributions). **Two stages**: one joint optimization, then extrapolation off the observed
 span. Run in order — the second reads the first's CSV:
 
-**One entry point**, `estimate_cross_sections.py`, dispatches on `--mode`:
+**One entry point**, `estimate_cross_sections.py`, fitting BOTH data terms in one joint solve.
+Per year the objective is
 
-- `--mode mle` — smoothed, aggregate-constrained censored MLE on EPUF alone. Implementation
-  `crosssec_mle.py`. Canonical; feeds `extrapolate_params.py` and the aggregate validation.
-- `--mode mle-gmm` — convex combination `(1−λ)·negll/n + λ·r'Wr` of that likelihood with an
-  iterated GMM criterion on the published GKSW (guv) sel0 targets. Implementation
-  `crosssec_gmm.py`. **Deliberately drops the aggregate-mean constraint** — read that module's
-  docstring before feeding its surface to EPUF-denominated aggregate validation.
-- `--mode both` — run both.
+```
+J = Sum_c [ (1-lam) ( negll_c + eta w_c E[X]_c ) + lam n_c Q_c ]
+  + rho Sum_{a not free} || sqrt(Omega) D2 g_a ||^2
+```
+
+- `negll` (`obj_mle.py`) — the doubly censored EPUF likelihood.
+- `Q` (`obj_gmm.py`) — an iterated GMM criterion on the published GKSW (guv) sel0 targets,
+  **shape only**: the level direction is projected out (see below). Cells with no guv
+  counterpart carry the likelihood alone, so the surface stays complete.
+- `eta` — the per-year aggregate-mean constraint against the published ASS benchmark.
+  **Note the parenthesis**: it is a constrained MLE convex-combined with the GMM criterion,
+  not a third term alongside. The pull is a statement about the level the *likelihood*
+  identifies, so it is weighted like the likelihood; outside the combination a guv cell would
+  feel it `(1−λ)⁻¹` harder than the MLE-only cell beside it, and one η would mean two
+  different things within a year. `--no-constrain` drops it.
+- `rho` — the quadratic roughness penalty along age, on the g slots selected by `--pen-slots`
+  (default all six), skipping the second differences exempted by `FREE_STEPS`.
+
+`--lam 0` is the pure censored MLE and reproduces the pipeline this replaces; `--lam 1` is
+rejected, because a shape-only criterion does not identify the level. Default `--lam 0.5`, the
+weighting at which the objective IS the composite likelihood treating the published statistics
+as Gaussian observations at their estimated precision.
+
+**Why the GMM term is shape-only, and why that is not a detail.** The GKSW targets carry
+GKSW's W-2 commerce-and-industry earnings concept, ~7–10% above EPUF covered earnings in the
+early decades. Efficient weighting makes that wedge bind *hard* — meanlog's sampling sd is
+~σ/√n ≈ 0.008, so a 0.08 log-point concept gap is ~10 sd — and against η, which can only thin,
+it is a fight the GMM term wins: η runs to its ceiling against a criterion that keeps
+re-inflating the level. So `obj_gmm` concentrates the level out. Because a shift of the log
+scale is an EXACT group action on both families (shift ν, or both μ's, by δ and log X shifts by
+δ), the wedge is exactly one direction in residual space, and the criterion becomes
+
+```
+Q = min_delta r(theta, delta)' W r(theta, delta) = r0'W r0 - (d'W r0)^2 / (d'W d)
+```
+
+the W-orthogonal projection of that direction out of `r` — rank 9, not 10. **Measured**: across
+a ±0.10 level shift the raw criterion swings 2.1× (57.6 → 27.4) while the projected one moves
+2.3% (10.68 → 10.93), and δ̂ tracks the shift one-for-one. δ̂ falls out free as an estimate of
+the concept wedge per cell and is reported in the `wedge` column — a diagnostic, nothing
+consumes it. Note the truncation moves WITH the shift (the published statistics condition on
+the published concept clearing Ymin), so the model sees threshold `t−δ` and evaluation points
+`y_q−δ`; getting that wrong silently reintroduces a level.
 
 ```bash
-# stage 1 — joint smoothed-constrained MLE → cross_section_params_smoothed.csv
+# stage 1 — joint solve → cross_section_params_smoothed.csv
 #           (also writes the raw stage-0 fits to cross_section_params.csv, + both heatmap sets)
-python code/cross_sections/estimate_cross_sections.py --mode mle [--jobs N] [--rho R] [--rho-steps S]
-# stage 1 alt — MLE+GMM against the GKSW targets → cross_section_params_guvgmm_smoothed.csv
-python code/cross_sections/estimate_cross_sections.py --mode mle-gmm [--lam L] [--gmm-iters K] [--no-smooth]
+python code/cross_sections/estimate_cross_sections.py [--lam L] [--jobs N] [--rho R] [--gmm-iters K]
+#   [--no-constrain]  drop the aggregate pull -> plot_agg_tax_total becomes an out-of-sample check
+#   [--pen-slots 0123]  penalize only the four functionals common to both sexes (see below)
+#   XS_FREE_STEPS=lo:hi  ages whose first difference is exempt from the penalty (default 62:67)
 # stage 2 — anchor + wage-index extrapolation off the data edges → cross_section_params_extrapolated.csv
 python code/cross_sections/extrapolate_params.py
 
@@ -395,7 +433,7 @@ The per-figure scripts read the CSVs, so they are seconds, not minutes. `plot_cr
 defaults to the pipeline parameters; `--refit` fits the cell standalone and `--overlay` draws
 both, which is how to see what smoothing changed in one cell.
 
-**Stage 1** (`--mode mle`, implemented in `crosssec_mle.py`) implements the `smoothed-constrained-mle` skill:
+**Stage 1** (`estimate_cross_sections.py`) implements the `smoothed-constrained-mle` skill:
 per `(year, sex, single-year age)` cell (~6.4k cells, ≥1000 obs each), fit the censored
 distribution while **simultaneously** (a) borrowing strength across neighbouring ages and
 (b) pinning each year's uncapped aggregate mean to the published ASS benchmark. The two must
@@ -423,18 +461,55 @@ same thing for both. **Every slot is closed form** (Normal-Laplace cumulants; no
 central moments; mean excess at the cap): g is evaluated inside every objective evaluation, and
 quantile-based functionals needing CDF bisection cost ~30× more.
 
-The roughness operator is a **robust (Huber) second difference** along age. Basin-hopping is
-already handled by g + Viterbi, so the operator's job is to protect *genuine* regime switches
-(retirement, young-age entry): a quadratic ‖Dg‖² charges a true step quadratically and smears it,
-while the Huber loss crushes sawtooth but lets a sparse, isolated jump through at ~linear cost.
-It is location-free — no cutoff to hard-code, and the year-varying retirement age is handled
-automatically.
+The roughness operator is a **plain quadratic second difference** along age, with a named
+exemption window. It used to be a Huber loss, which was location-free: it crushed sawtooth while
+letting *any* sparse isolated jump through at ~linear cost, so genuine regime switches survived
+wherever they fell. A quadratic charges a true step quadratically and smears it, so breaks now
+have to be named — `FREE_STEPS` (env var `XS_FREE_STEPS`, default `62:67`) drops every second
+difference straddling a step into ages 62–67, from the penalty, from Ω's estimation, and from
+the Viterbi cost.
 
-The fits live in `code/cross_sections/crosssec_fit.py` — `fit_dpln` (men, double
-Pareto-lognormal) and `fit_mixture` (women, two-component lognormal mixture), both doubly
-Type-I censored at `LOWC = $200` and a year-specific `HIGHC = taxmax(year) - $1000`. Both take
-an optional `start=` warm-start theta (`start=None` runs the multi-start), plus `mean_pen=(eta, w)`
-and `smooth_pen=(wvec, g_target)`. Two performance/robustness details that matter:
+**Why a window and not age 65.** On the unsmoothed fits the drop in `E logY` spans 62–70 against
+a ~−0.035/yr baseline, and the largest single step is at **66** (men −0.199, women −0.213), not
+65 (−0.161 / −0.124). And `D²` charges *curvature*, not slope, so a steady retirement decline is
+nearly free already; what it charges is the two **corners** where the decline starts and stops,
+which sit at 63 (+0.103) and 66 (+0.109) — one year after each Social Security threshold (62
+early eligibility, 65 full), the lag a mid-year retirement produces as a partial year followed by
+a full one. Exempting 65 alone would have missed both. The cost of the switch: **young-age entry
+at 16–19** is the other sharp break the fits show (age 16 is 2.9× median roughness for men, 9.8×
+for women) and it is *not* exempt, so it is now smoothed through.
+
+Under a quadratic the Gauss–Seidel pull is **exact rather than an IRLS surrogate** — holding the
+neighbours fixed, the penalty in `g_a` is exactly `4ρΩ(g_a − (g_m+g_p)/2)²` — so nothing in
+`smooth_pen` depends on the current `g_a`.
+
+**Which slots to penalize was tested, not assumed.** `--pen-slots 0123` restricts the penalty to
+the four functionals common to both families, excluding slots 4–5 (`log β`/`log α` for men, mean
+excess either side of the cap for women). Measured at λ=0.5: men's α comes out **28% rougher**
+along age with visible high-α speckle, β improves (0.65×) because the same penalty budget over
+four slots raises ρ₀, and **women are unchanged** (all five parameters within 1–10%, the two
+surfaces visually identical). The aggregate is also marginally worse — 8 years left at η=0 versus
+4, min ratio 0.990 versus 0.994. So the default stays all six: nothing gained for women, and the
+one men's parameter that most needs borrowing strength gets worse.
+
+The models live in `code/cross_sections/xs_model.py` — the dPlN (men, double Pareto-lognormal
+via the Normal-Laplace) and the two-component lognormal mixture (women) — and the single fitter
+`estimate_cross_sections.fit_cell` assembles every term over them, doubly Type-I censored at
+`LOWC = $200` and a year-specific `HIGHC = taxmax(year) - $1000`. It takes an optional `start=`
+warm-start theta (`start=None` runs the multi-start) plus `gmm=(lam, qfun)`, `mean_pen=(eta, w)`
+and `smooth_pen=(wvec, g_target)`. Four details that matter:
+
+- **Everything is in SUMMED-likelihood units**, one unit system throughout: `negll` is a sum over
+  observations, so `Q` is multiplied by the cell's `n` and ρ by the year's `ntot`. The two
+  predecessor modules ran per-observation and summed units in parallel, needing an `n` divisor on
+  some terms and not others — which is exactly how the single scalar η quietly acquires a per-cell
+  `1/n` and stops being the thing the aggregate constraint assumes.
+- **`fit_cell` returns the theta re-packed FROM ITS OUTPUT ROW**, not the optimizer's `res.x`.
+  That round trip costs an ulp but buys canonical labelling — the mixture's higher-mean component
+  is always first — so a warm start re-enters the next solve in the same orientation. Without it
+  the components swap freely between Gauss–Seidel passes; the likelihood is symmetric under the
+  swap but the optimizer's path is not, and neighbouring ages drift into mirrored
+  parameterizations of the same distribution.
 
 - **The interior likelihood is binned** (`bin_interior`, ≤256 mass points). The joint solve refits
   each cell tens of times; this is the single biggest speedup (a warm dPlN fit: 46 ms → 0.7 ms).
@@ -513,6 +588,73 @@ belongs in the location (ν) rather than the tail.
 
 `extract_table_4B1.py` has flags: `--no-duckdb` (write CSV only), `--html/--out/--duckdb/--table`.
 
+## Open items in the cross-section estimator
+
+Known-outstanding as of the 2026-09-09 restructure (`estimate_cross_sections.py`). None of
+these is a bug in what is committed; they are things measured-and-deferred, listed so a later
+session does not have to rediscover them. Roughly in order of how much they affect results.
+
+1. **`SMOOTH_FRAC = 1e-4` is stale, and so is the sweep table above it.** That value came from
+   a 5-point sweep of full re-solves done under the *Huber* loss and the *old* constraint
+   arrangement. Both changed. ρ₀ has since been observed at 7.12e-08 (Huber), 1.35e-08
+   (quadratic, six slots) and 2.15e-08 (quadratic, four slots) for the same `SMOOTH_FRAC`, so
+   the number no longer means what the table says. **Re-sweep before quoting the table or
+   trusting the smoothing strength.** ~5 full re-solves; budget ~28 min each with the
+   constraint on. The old ceiling argument (ρ capped because smoothing biases the aggregate
+   down by Jensen and η can only thin) still applies, so sweep upward with that in view.
+
+2. **The canonical CSVs under `output/` predate all of this** — they are pre-restructure,
+   pre-`ORDER BY`, Huber-penalty, and were produced by the deleted `crosssec_mle.py`. Every
+   number quoted from them in this file (the `0.9955 [0.969–1.004]` in-sample ratio, the 374
+   α≤1 cells) describes an estimator that no longer exists. Regenerate before relying on them.
+
+3. **Men's g slots 4–5 are raw parameters; women's are functionals.** `log β`/`log α` versus
+   mean excess either side of the cap — so the two sexes do not penalize the same object,
+   despite both docstrings claiming a common layout. Dropping them is *not* the fix (tested:
+   `--pen-slots 0123` makes men's α 28% rougher and changes women not at all). The fix is to
+   give the dPlN the same mean-excess form: `obj_gmm.nl_trunc_central` already returns the
+   Normal-Laplace truncated central moments in closed form, so the upper mean excess is a
+   direct call and the lower follows from the untruncated mean.
+
+4. **Young-age entry (16–19) is now smoothed through.** It is the sharpest break in the fits —
+   age 16 is 2.9× median roughness for men, 9.8× for women, larger than anything at
+   retirement — and the quadratic loss has no location-free robustness to protect it. Either
+   add a second exemption window or reconsider the `MIN_N` floor at those ages.
+
+5. **The aggregate constraint is one-sided: it enforces `E[X] ≤ target`, never `≥`.** Any year
+   whose model mean already sits below the benchmark gets η = 0 and is left as fitted. That is
+   forced by the linear pull — a negative η makes the objective unbounded below, since
+   `E[X] ∝ 1/(α−1)` diverges (measured: 1990 goes from 0.96× to 60,000× between η = −0.05 and
+   −0.1). A **quadratic** pull on the log mean, `η·w·(log E[X] − log target)²`, would be
+   bounded below in both directions and give a genuinely two-sided constraint — which would
+   also decouple ρ from the Jensen ceiling in item 1. Contained change to `fit_cell` and
+   `solve_eta`.
+
+6. **1951–56 have no GKSW targets at all** (they start in 1957), so those years are pure
+   censored MLE whatever `--lam` is, and they are exactly the years where the cap is tightest
+   (70–75% of men aged 40 above it). Unconstrained they run 1.4–2.5× the published aggregate.
+   η currently carries them. If pre-1957 uncapped means need to stand on their own, that needs
+   a different instrument, not a different λ.
+
+7. **The "7–10% GKSW concept wedge" claimed above is not what the data show.** `obj_gmm`'s
+   level projection reports δ̂ per cell (the `wedge` column) as a free byproduct. Measured on
+   the unconstrained λ=0.5 surface: **+1.4% (1980s), +1.4% (1990s), +2.7% (2000s)**, and
+   *negative* (−0.04 to −0.08) before 1980 — though the early decades are confounded, because
+   the model's own level is running hot there. The trustworthy decades are the post-1980 ones
+   and they say the wedge is far smaller than documented. Worth reconciling against the source
+   of the 7–10% figure before either number is used.
+
+8. **`project=False` is untested in production.** The level projection exists so GKSW's level
+   cannot beat η. Both are now active, so the rationale holds — but with η carrying the level
+   anyway it is worth measuring whether letting GKSW speak to the level too (its p98 sits
+   4–5.6× above the cap in the tight-cap years, i.e. real tail information the microdata
+   cannot have) helps 1957+. Needs a CLI flag; `obj_gmm.make_qfun` already takes the argument.
+
+9. **The guv-only years 2007–13 are not fit.** The predecessor `crosssec_gmm.py` fit them by
+   pure GMM. With a shape-only criterion that no longer identifies their level, so they would
+   need η against the ASS benchmark on borrowed 2006 composition. Currently they fall to
+   `extrapolate_params.py`'s wage-index shift instead.
+
 ## Architecture
 
 - **Code and outputs are organized into four parallel sections**, each a subfolder of
@@ -529,15 +671,38 @@ belongs in the location (ν) rather than the tail.
   never import a plotting module; every figure script lives in `code/<section>/plots/` and
   mirrors `output/<section>/plots/`. This is load-bearing, not cosmetic: the MLE+GMM estimator
   used to import its GKSW target loaders *from* `plot_guv_comparison.py`, which made an
-  estimation run depend on matplotlib. Those loaders are now `cross_sections/guv_targets.py`.
-  Where an estimator does produce figures as a side deliverable (`--mode mle` writes the
-  parameter heatmaps), it **lazy-imports** the plot module inside `main()` so the dependency
-  never exists at module import time.
-- **Each section has ONE estimation entry point** that dispatches on `--mode`:
-  `estimate_cross_sections.py` (`mle` | `mle-gmm` | `both`) and `estimate_g_cohort.py`
-  (`ols` | `smm-mean` | `smm-quantiles`). The modules behind them (`crosssec_mle.py`,
-  `crosssec_gmm.py`, `gcohort_model.py`, `gcohort_ols.py`, `gcohort_smm.py`) are libraries with
-  no CLI of their own — add a mode to the entry point rather than a new top-level script.
+  estimation run depend on matplotlib. The rule keeps being violated by *accretion* — a plot
+  script grows a useful loader, and non-plotting code starts importing it — so the section
+  root now holds three libraries that exist to absorb exactly that, and figure scripts import
+  them rather than the reverse:
+  - `guv_targets.py` — the GKSW targets, the stable log-space Normal-Laplace pdf/cdf, and
+    `cell_functionals` (the model side of the same statistics).
+  - `benchmarks.py` — the published/projected ASS + TR series. **One definition per
+    quantity.** `ass_uncapped_per_worker()` in particular is the single moment the joint solve
+    is pinned to (`estimate_cross_sections` stage 3), the pre-1951 α calibration targets
+    (`extrapolate_params`), *and* the uncapped row of the validation figure. It used to be
+    computed three times from the same two workbook columns, reconciled only by a comment — if
+    those had drifted, the estimator would have been constrained to one number and validated
+    against another, with nothing in any output to reveal it.
+  - `aggregates.py` — EPUF composition, per-cell model means, and the aggregation that turns a
+    parameter surface into aggregate earnings. No matplotlib.
+
+  Where an estimator does produce figures as a side deliverable (the parameter heatmaps), it
+  **lazy-imports** the plot module inside `main()` so the dependency never exists at module
+  import time.
+- **The uncapped mean E[X] has exactly one implementation per model**, `xm.dpln_mean` /
+  `xm.mix_mean` in `xs_model.py`. It had grown three (the fitters', `extrapolate_params`', and the
+  validation plot's) — with *different argument orders* for the mixture, which is the shape this
+  class of bug takes. Everything that needs E[X] calls the model layer's version, so the
+  estimator's notion of the mean and the validation's cannot diverge.
+- **The cross-section section is four files over a shared model layer**, and the split is by
+  ROLE, not by estimator: `xs_model.py` (distributions, `g(θ)`, `E[X]`, the structural boxes),
+  `obj_mle.py` and `obj_gmm.py` (one data term each, no optimizer), `estimate_cross_sections.py`
+  (the solver and the only CLI), `extrapolate_params.py` (off the data edges). There is no longer
+  a module per estimator — the two data terms are combined in ONE solve weighted by `--lam`, so
+  what used to be `--mode mle` vs `--mode mle-gmm` is now a point on a continuum. `estimate_g_cohort.py`
+  still dispatches on `--mode` over `gcohort_model.py` / `gcohort_ols.py` / `gcohort_smm.py`,
+  which are libraries with no CLI of their own — add a mode there rather than a new top-level script.
 - **Single shared DB `processed_data/ssa.duckdb`** is the integration point. Everything —
   EPUF microdata and Supplement aggregates — lives here so replication queries can `JOIN`
   microdata against the published series `USING (year)`. The two loaders each touch only

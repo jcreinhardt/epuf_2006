@@ -69,7 +69,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import crosssec_fit as cf
+import xs_model as xm
 from guv_targets import (load_guv, load_deflator, check_guv_conventions, _PCE_GKSW,
                          BASE_YEAR)
 from plot_guv_quantile_validation import epuf_quantiles, YEARS, AGES
@@ -103,7 +103,7 @@ def cell_gaps():
     ep = epuf_quantiles()
     fac = ep["year"].map(load_deflator())
     for c in SHOW:
-        ep[f"{c}_cens"] = ep[c] >= ep["taxmax"] - cf.HIGH_MARGIN     # on nominal values
+        ep[f"{c}_cens"] = ep[c] >= ep["taxmax"] - xm.HIGH_MARGIN     # on nominal values
         ep[c] = ep[c] * fac
     m = guv[["year", "sex", "age", "cohort"] + SHOW].rename(
         columns={c: f"{c}_guv" for c in SHOW}).merge(
