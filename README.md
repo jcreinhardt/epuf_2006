@@ -161,7 +161,7 @@ epuf_2006/
 │           └── plot_gkos_ordinal.py       # ordinal-transform invariance to g(t)
 ├── processed_data/
 │   └── ssa.duckdb                     # shared DB: demographic + annual + supplement_4b1 (~1.6 GB)
-└── output/                            # generated artifacts (regenerable; not version-controlled)
+└── output/                            # estimation CSVs are tracked; figures (.pdf/.png) are not
     ├── data_import/
     │   └── supplement_2008_table_4B1.csv  # ASS Table 4.B1, extracted (1937–2007)
     ├── ssa_replication/
