@@ -165,8 +165,10 @@ Aggregate, `--renorm-comp`, ages 20–70, in sample 1951–2006:
 
 **The overshoot is NOT an age-extrapolation failure**, and that is measured rather than assumed:
 the +0.171 mean-log gap above is computed on ages 25–55 only, and alone implies ≈1.19× on levels
-before any extrapolation happens. Restricting the aggregate to `--ages 25 55` leaves the ranking
-unchanged. What remains is the model's log-earnings **shape**, which no choice of g can fix.
+before any extrapolation happens. (Do NOT try to confirm this by re-running the aggregate on
+`--ages 25 55`: `--renorm-comp` then assumes the under-25s and over-55s earn like the 25–55
+average, which they do not, and the ratio rises to 1.167/1.353 from the renormalisation alone.
+The rank-mapping below is the clean version of the same check.) What remains is the model's log-earnings **shape**, which no choice of g can fix.
 
 **The shape error is in the UPPER HALF, and it is not an extreme-tail problem**
 (`plots/plot_shape_gap.py`). Netting the level out — the re-levelled fit, so mean log matches —
