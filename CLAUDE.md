@@ -114,6 +114,39 @@ refuses a narrower file.
 
 ### `--mode smm-p50`: the only profile disciplined outside ages 25–55
 
+**The design in one place, because the pieces are easy to mis-remember.** Per (sex, cohort) block,
+cohorts 1957–1983, 54 blocks:
+
+| stage | free parameters | targets |
+|---|---|---|
+| SMM (`gcohort_epuf.py`) | `g0, g1, g2` + `h_young, h_old` + `δ` — **six** | GKSW **p50** of log earnings, ages 25–55, vs the model median; EPUF **p50**, ages 20–70, vs the model median **+ δ** |
+| re-level (`relevel_g_cohort.py`) | `g0` alone | EPUF's **mean log of capped earnings**, ages 25–55, with the model clipped at the same top code |
+
+**No mean appears anywhere in the SMM objective, and no GKSW mean is used at all** on the default
+path — `--level gksw` was the old one. Both SMM blocks are medians against medians; that is the
+whole point, since a mean on one side and a median on the other forces δ to track a target that
+moves at −0.043/decade (see `epuf_targets.py`). Shorthand: **medians set the shape, EPUF's capped
+mean log sets the level.** The two stages commute cleanly because `g0` is a pure intercept and
+everything else is shape.
+
+**Extrapolation happens at two separate layers, and only the second is about unobserved cohorts.**
+
+1. *Inside* 1957–1983, where EPUF runs out of ages. A block needs `MIN_YOUNG = 3` observed ages
+   below 25 and `MIN_OLD = 4` above 55 to carry a hinge **column at all**. Every fitted cohort has
+   all of 20–24, so `h_young` is always estimated; above 55 the coverage thins (19 cohorts at 56
+   down to 5 at 70, none for cohorts 1976+), so **11 of 27 blocks per sex are fitted without the
+   `h_old` column** and then given their sex's 16-cohort mean (−0.083 men, −0.375 women) by
+   `fill_hinges`. The column is absent from the design rather than set to zero, so their fitted `g`
+   is untouched.
+2. *Outside* 1957–1983, out to cohorts 1892–2105 (`extrapolate_g_cohort.py`). Every shape
+   parameter — `g1`, `g2`, `h_young`, `h_old`, and `δ` where present — is **frozen at the mean of
+   the 5 edge cohorts** (1957–61 backward, 1979–83 forward); only `g0` moves, rigid-shifted
+   one-for-one with the real average wage index read at age 25. Cohorts 1892 and 1952 in the
+   output carry identical shape and differ only in `g0`, which is the rule made visible.
+
+That one-for-one drift is the weakest assumption in the chain and it is a modelling choice, not a
+finding: the in-sample regression of `g0` on the wage index gives **−0.36 for men** (see below).
+
 Every GKOS/GKSW tabulation stops at age 55 (verified across the whole replication package), so
 the other modes extrapolate blind. EPUF covers 20–70 for the same cohorts. This mode targets the
 **median of log earnings in both sources** — the one statistic each measures well, since EPUF's
