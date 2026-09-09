@@ -91,6 +91,7 @@ python code/dynamics/estimate_g_cohort.py --mode smm-quantiles   # gcohort_smm.p
 python code/dynamics/estimate_g_cohort.py --mode smm-p50         # gcohort_epuf.py — GKSW **and EPUF** medians
 python code/dynamics/relevel_g_cohort.py --fits output/dynamics/g_cohort_smm_p50.csv   # → *_relevelled.csv
 python code/dynamics/plots/plot_p50_fit.py [--cohort 1970]       # both sources, model, model+δ
+python code/dynamics/plots/plot_shape_gap.py                     # why the level misses: log-earnings shape
 python code/dynamics/extrapolate_g_cohort.py --fits output/dynamics/g_cohort_smm_mean.csv   # → *_extrapolated.csv
 python code/dynamics/plots/plot_g_cohort.py output/dynamics/g_cohort_*.csv     # coefficient paths, any CSVs overlaid
 python code/dynamics/plots/compare_g_cms.py [--fits CSV]                       # vs CMS's lifecycle_income_*.dta
@@ -166,6 +167,33 @@ Aggregate, `--renorm-comp`, ages 20–70, in sample 1951–2006:
 the +0.171 mean-log gap above is computed on ages 25–55 only, and alone implies ≈1.19× on levels
 before any extrapolation happens. Restricting the aggregate to `--ages 25 55` leaves the ranking
 unchanged. What remains is the model's log-earnings **shape**, which no choice of g can fix.
+
+**The shape error is in the UPPER HALF, and it is not an extreme-tail problem**
+(`plots/plot_shape_gap.py`). Netting the level out — the re-levelled fit, so mean log matches —
+leaves sd log matching to 0.005, but that agreement is two errors cancelling. Ages 25–55, log
+points, men:
+
+| spread | data | model |
+|---|---|---|
+| p50 − p10 | 1.24 | 1.02 |
+| p90 − p50 | 0.70 | 1.13 |
+| p98 − p90 (age 25 → 55) | 0.26 → 0.94 | 0.58 → 0.86 |
+
+The data's lower half is **flat in age** (1.27 → 1.32) while the model's fans out (0.79 → 1.31);
+the model's upper half sits ~0.4 above the data's at every age. So the process disperses roughly
+symmetrically in logs where the data disperse one-sidedly, and the mismatch is between the median
+and p90 — the very top segment p98 − p90 is if anything too NARROW at older ages. That is why
+model skew log is +1.09 (men) / +0.83 (women) above the data's, and mean-minus-median is +0.03
+against the data's −0.14.
+
+Mapping the model's own draws rank-preservingly onto the published percentiles isolates the price
+of that shape: **E[Y] model / data-shaped = 1.076 (men), 1.099 (women)** on ages 25–55 at a
+matched mean log. Everything above p75 contributes +160% of the excess and everything below it
+−60%. It is also why capping helps so much (1.212 uncapped → 1.070 taxable): the cap removes
+exactly the part that is wrong. The remaining gap to 1.212 is the same mechanism running past 55,
+where the fan keeps widening unopposed — E[e^u]/median goes 1.30 at age 25, 1.81 at 55, 2.42 at
+70 — plus the GKSW-vs-EPUF universe wedge. Fixing it means changing the process (the HIP fan
+σ_β·t is normal and symmetric, so it cannot produce a flat lower half), not g.
 
 **`--drift fitted` is available and is NOT recommended.** It replaces the assumption that `g0`
 tracks the wage index one-for-one with the in-sample slope (men −0.10, clipped to 0). It fixes the

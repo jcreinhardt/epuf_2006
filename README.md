@@ -151,6 +151,7 @@ epuf_2006/
 │           ├── plot_agg_tax_dynamics.py   # aggregate taxable earnings from the g(t) path vs ASS
 │           ├── plot_cohort_profile.py     # one cohort by age: model vs GKSW vs EPUF
 │           ├── plot_p50_fit.py            # both target sources, model median, model + δ
+│           ├── plot_shape_gap.py          # log-earnings spreads and E[Y] by rank bin, model vs GKSW
 │           ├── plot_cms_selection.py      # CMS's process as they coded it: the selection wedge
 │           └── plot_gkos_ordinal.py       # ordinal-transform invariance to g(t)
 ├── processed_data/
