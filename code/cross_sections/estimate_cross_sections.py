@@ -6,13 +6,24 @@ Per (year, sex, single-year age) cell the objective is a convex combination of t
 terms, and the year's objective adds a roughness penalty coupling neighbouring ages:
 
     J_year(theta) = Sum_c [ (1-lam) negll_c + lam n_c Q_c ]          <- data
-                  + eta Sum_c w_c E[X]_c                             <- aggregate constraint
                   + rho Sum_a huber( sqrt(Omega) D2 g_a )            <- roughness along age
 
   negll   obj_mle    doubly censored EPUF likelihood (dPlN men, lognormal mixture women)
   Q       obj_gmm    SHAPE-ONLY GMM criterion on the published GKSW targets, level projected out
-  E[X]    xs_model   analytic uncapped mean; w_c the cell's share of the year's workers
   g       xs_model   the 6 regime-invariant functionals the penalty acts on
+
+THAT IS THE WHOLE ESTIMATOR. Nothing pins the year's aggregate to the published ASS series:
+the level comes from the EPUF likelihood, which is what identifies it, and the published
+aggregate is left free to serve as OUT-OF-SAMPLE VALIDATION. Pinning it would make the
+uncapped row of plot_agg_tax_total a tautology -- the model agreeing with the number it was
+fitted to -- and that row is the main end-to-end check this section has.
+
+`--constrain` restores the per-year aggregate-mean pull (`+ eta Sum_c w_c E[X]_c`, one scalar
+eta per year root-found so the composition-weighted uncapped mean hits the ASS benchmark). It
+is retained for two reasons and is not the default: it is the only way to reproduce the
+pre-2026-09 canonical surface, and at `--lam 0 --constrain` this module reproduces the
+crosssec_mle pipeline it replaced. Read solve_eta before using it -- eta >= 0 only, and
+interacts with rho through Jensen.
 
 lam = 0 is the pure censored MLE (and reproduces the pipeline this module replaces); lam = 1
 would be pure GMM, which does NOT identify the level -- obj_gmm projects that direction out
@@ -87,14 +98,18 @@ LAM        = 0.5                # convex weight on the GMM criterion; see the do
 GMM_ITERS  = 2                  # weight-matrix updates after the iteration-0 fit
 NG         = 6                  # length of the functional vector g
 
-# rho0 target: the penalty is worth this fraction of the fit at the unsmoothed solution. rho
-# trades against the mean constraint in ONE direction: smoothing shrinks the cross-cell
-# dispersion of the log-scale g slots and E[X] is exponential in them, so by Jensen the year's
-# aggregate mean is biased DOWN. eta > 0 can only thin, so the smoothed fit must still
-# OVERSHOOT for the constraint to pin it exactly; where it undershoots the year is left as
-# fitted. Calibrated by a 5-point sweep of full re-solves -- 1e-4 is an INTERIOR optimum, not
-# "as little smoothing as possible". Retune with --rho; judge on the heatmaps + the validation
-# figure.
+# rho0 target: the penalty is worth this fraction of the fit at the unsmoothed solution.
+#
+# 1e-4 IS INHERITED FROM THE CONSTRAINED ESTIMATOR AND IS PROBABLY NOW TOO SMALL. It was
+# chosen by a 5-point sweep of full re-solves under the aggregate constraint, where rho traded
+# against eta in one direction: smoothing shrinks the cross-cell dispersion of the log-scale g
+# slots, E[X] is exponential in them, so by Jensen the year's aggregate mean is biased DOWN,
+# and eta > 0 can only thin -- so rho had to stay small enough that the smoothed fit still
+# OVERSHOT the benchmark. That ceiling is gone with the constraint off by default, and the
+# binding limit is now only smearing genuine regime switches, which the Huber loss already
+# protects against. The predecessor GMM module ran 1e-3 for exactly this reason. Re-sweep with
+# --smooth-frac before trusting the smoothed surface; judge on the heatmaps and on
+# plot_agg_tax_total, which is now an independent check rather than a restatement of the fit.
 SMOOTH_FRAC = 1e-4
 RHO_STEPS  = 4                  # rho-continuation steps
 RHO0_START = 30.0               # continuation begins at RHO0_START * rho_target
@@ -125,13 +140,19 @@ GFUN  = {1: xm.g_dpln,     2: xm.g_mix}
 
 
 # --------------------------------------------------------------------------- the fitter
-def _bounds(sex, floor_alpha):
+def _bounds(sex):
     """Structural boxes (xs_model): constrain the degeneracies away rather than hoping a
-    penalty outvotes an unbounded likelihood. alpha is floored above 1 whenever anything
-    downstream will take the uncapped mean, which diverges as alpha -> 1."""
+    penalty outvotes an unbounded likelihood.
+
+    ALPHA_MIN applies ALWAYS, not only under the mean pull as it did while that pull was the
+    default. alpha <= 1 gives an INFINITE uncapped mean, and it is a symptom of the upper tail
+    being unidentified under the cap rather than a finding about earnings -- unconstrained
+    censored MLE put 374 of 3326 men's cells there, up to 15% of a year's workers, which makes
+    the year's aggregate undefined rather than merely biased. The floor does not rescue such a
+    cell (at 1.05 the mean is still 20x the scale), it just keeps every downstream aggregate
+    arithmetic rather than nan."""
     if sex == 1:
-        amin = np.log(xm.ALPHA_MIN) if floor_alpha else np.log(0.05)
-        return [(amin, np.log(500.0)), (np.log(0.05), np.log(500.0)),
+        return [(np.log(xm.ALPHA_MIN), np.log(500.0)), (np.log(0.05), np.log(500.0)),
                 (xm.NU_LO, xm.NU_HI), (np.log(xm.TAU_MIN), np.log(xm.TAU_MAX))]
     lo, hi = np.log(xm.SIG_MIN - xm.SIG_FLOOR), np.log(xm.SIG_MAX - xm.SIG_FLOOR)
     return [(4.0, 13.0), (4.0, 13.0), (lo, hi), (lo, hi), (None, None)]
@@ -205,7 +226,7 @@ def fit_cell(sex, x, lowc, highc, start=None, gmm=None, mean_pen=None, smooth_pe
             val += sp
         return val if np.isfinite(val) else 1e18
 
-    bnds = _bounds(sex, floor_alpha=(mean_pen is not None or qfun is not None))
+    bnds = _bounds(sex)
     if start is not None:
         seeds, opts = [start], (opts or WARM_OPTS)
     else:
@@ -627,7 +648,7 @@ def write_csv(path, rows):
 
 
 def main(jobs=None, lam=LAM, gmm_iters=GMM_ITERS, rho=None, rho_steps=RHO_STEPS,
-         smooth_frac=SMOOTH_FRAC, constrain=True, plots=True, raw=RAW, out=OUT):
+         smooth_frac=SMOOTH_FRAC, constrain=False, plots=True, raw=RAW, out=OUT):
     if not 0.0 <= lam < 1.0:
         raise SystemExit("--lam must be in [0, 1): at lam = 1 the GMM criterion is shape-only "
                          "and does not identify the level (obj_gmm)")
@@ -695,8 +716,10 @@ def build_parser():
     ap.add_argument("--smooth-frac", type=float, default=SMOOTH_FRAC,
                     help="rho calibration: penalty as a fraction of the unsmoothed fit")
     ap.add_argument("--rho-steps", type=int, default=RHO_STEPS, help="rho-continuation steps")
-    ap.add_argument("--no-constrain", action="store_true",
-                    help="drop the per-year aggregate-mean constraint (diagnostic)")
+    ap.add_argument("--constrain", action="store_true",
+                    help="ALSO pin each year's uncapped aggregate mean to the ASS benchmark "
+                         "with a per-year eta. Off by default: the published aggregate is "
+                         "validation, not a target. See the module docstring.")
     ap.add_argument("--no-plots", action="store_true", help="skip the parameter heatmaps")
     ap.add_argument("--out", default=str(OUT), help="smoothed-surface CSV")
     ap.add_argument("--raw", default=str(RAW), help="raw stage-0 CSV")
@@ -706,5 +729,5 @@ def build_parser():
 if __name__ == "__main__":
     a = build_parser().parse_args()
     main(jobs=a.jobs, lam=a.lam, gmm_iters=a.gmm_iters, rho=a.rho, rho_steps=a.rho_steps,
-         smooth_frac=a.smooth_frac, constrain=not a.no_constrain, plots=not a.no_plots,
+         smooth_frac=a.smooth_frac, constrain=a.constrain, plots=not a.no_plots,
          raw=Path(a.raw), out=Path(a.out))
