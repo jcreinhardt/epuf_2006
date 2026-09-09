@@ -26,16 +26,29 @@ env/
 # separately; e.g. the CMS (JF 2025) package used by code/dynamics.
 replication_repos
 
-# Data and generated artifacts — large and/or regenerable, not version-controlled.
-# Rebuild the DB from raw_data with code/data_import/build_epuf_duckdb.sql
-# + code/data_import/extract_table_4B1.py.
+# Source data and the DB — large, and regenerable from raw_data with
+# code/data_import/build_epuf_duckdb.sql + code/data_import/extract_table_4B1.py.
 # (ignore contents but keep the directory skeletons via .gitkeep at any depth)
 raw_data/*
 processed_data/*
-output/**
 !raw_data/.gitkeep
 !processed_data/.gitkeep
-!output/**/
+
+# output/ IS tracked, except for figures. The split is by COST, not by size: a CSV in
+# here is minutes to hours of compute — the joint cross-section solve, the SMM over
+# cohort × sex blocks — and losing one means re-running an estimator, while every figure
+# is seconds away from those CSVs. A "larger than N MB" rule would get this exactly
+# backwards, because the expensive artifacts are the big ones (the parameter surfaces
+# are 1–2 MB each) and the cheap ones are the small ones.
+# PNGs ARE kept: they are the figures you actually look at and paste into slides, and a
+# figure is also a record of what a run looked like at the time, which the CSV alone is not.
+# The vector twins are not — a .pdf under output/ is regenerated beside its .png every run,
+# and the ones worth freezing get copied into presentation/<date>/figures/, which is tracked
+# by its own rule above.
+# Ignore the FILES, not the plots/ directories: eight cross-section plot scripts write
+# into theirs without creating it, so the skeleton has to survive a fresh clone.
+output/**/*.pdf
+output/**/*.svg
 !output/**/.gitkeep
 
 # LaTeX build products — the deck is regenerable from its .tex (xelatex, run twice).

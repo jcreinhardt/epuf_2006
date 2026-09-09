@@ -580,12 +580,20 @@ or `RHO_STEPS` — those change what is explored rather than how long it is poli
 **How much the constraint is worth**, measured on the in-sample uncapped mean per worker (the
 exact quantity stage 3 drives: cells weighted by their `n` share, analytic `dpln_mean`/`mix_mean`).
 Comparing `cross_section_params.csv` (stage 0, unconstrained) against
-`cross_section_params_smoothed.csv` over 1951–2006: the unconstrained fit averages **1.33×** the
-ASS benchmark and peaks at **3.5×** in the tight-cap 1950s–60s, against **0.9955 [0.969–1.004]**
-constrained. It also leaves **374 of 3326 men's cells at α≤1**, i.e. an *infinite* uncapped mean —
-up to 15% of a year's workers, so the unconstrained aggregate is not merely biased but undefined.
-Zero cells hit α≤1 after the joint solve. That is what the aggregate constraint buys; the two
-bullets below are how to keep it.
+`cross_section_params_smoothed.csv` over 1951–2006, **re-measured 2026-09-09 on the current
+estimator** (λ=0.5, quadratic penalty):
+
+| | mean ratio to ASS | range | men's cells at α≤1 |
+|---|---|---|---|
+| stage 0, unconstrained | **1.289** | 0.985–4.260 | 0 |
+| joint solve | **0.9997** | 0.994–1.003 | 0 |
+
+So the constraint is worth ~29% on the level, and it is *tight*: the whole in-sample range spans
+0.9 of a percentage point. The predecessor pipeline reached 0.9955 [0.969–1.004] — better centred
+and four times tighter now. **The α≤1 escape is gone on both sides**: the old unconstrained fit
+left 374 of 3326 men's cells with an *infinite* uncapped mean, and `ALPHA_MIN` now rules it out
+structurally rather than relying on the pull, so the "undefined, not merely biased" warning that
+used to justify the constraint no longer applies to stage 0. The level argument still does.
 
 **Two properties of the constraint that are easy to get wrong:**
 
@@ -649,10 +657,10 @@ session does not have to rediscover them. Roughly in order of how much they affe
    constraint on. The old ceiling argument (ρ capped because smoothing biases the aggregate
    down by Jensen and η can only thin) still applies, so sweep upward with that in view.
 
-2. **The canonical CSVs under `output/` predate all of this** — they are pre-restructure,
-   pre-`ORDER BY`, Huber-penalty, and were produced by the deleted `crosssec_mle.py`. Every
-   number quoted from them in this file (the `0.9955 [0.969–1.004]` in-sample ratio, the 374
-   α≤1 cells) describes an estimator that no longer exists. Regenerate before relying on them.
+2. ~~The canonical CSVs under `output/` predate all of this.~~ **Done 2026-09-09** (`d1e995e`):
+   regenerated at the current defaults, and the numbers above re-measured from them. The
+   pre-restructure surfaces are still in history at `ef69070` if the old fit is ever needed for
+   comparison.
 
 3. **Men's g slots 4–5 are raw parameters; women's are functionals.** `log β`/`log α` versus
    mean excess either side of the cap — so the two sexes do not penalize the same object,
@@ -685,7 +693,9 @@ session does not have to rediscover them. Roughly in order of how much they affe
 7. **The "7–10% GKSW concept wedge" claimed above is not what the data show.** `obj_gmm`'s
    level projection reports δ̂ per cell (the `wedge` column) as a free byproduct. Measured on
    the unconstrained λ=0.5 surface: **+1.4% (1980s), +1.4% (1990s), +2.7% (2000s)**, and
-   *negative* (−0.04 to −0.08) before 1980 — though the early decades are confounded, because
+   *negative* (−0.04 to −0.08) before 1980. The 2026-09-09 re-run, **constrained**, puts the
+   whole distribution at median **−0.004** log points [p10 −0.078, p90 +0.071] over 3100 cells,
+   i.e. centred on zero — smaller again — though the early decades are confounded, because
    the model's own level is running hot there. The trustworthy decades are the post-1980 ones
    and they say the wedge is far smaller than documented. Worth reconciling against the source
    of the 7–10% figure before either number is used.
@@ -753,6 +763,15 @@ session does not have to rediscover them. Roughly in order of how much they affe
   EPUF microdata and Supplement aggregates — lives here so replication queries can `JOIN`
   microdata against the published series `USING (year)`. The two loaders each touch only
   their own tables (`CREATE OR REPLACE`), so they compose without stepping on each other.
+- **`output/` is version-controlled: the CSVs and the PNGs, not the PDFs.** The CSVs are minutes
+  to hours of compute. The PNGs are kept for a different reason — they are the figures you look at
+  and paste into slides, and a figure is a record of what a run looked like at the time, which the
+  CSV alone is not. The `*.pdf`/`*.svg` twins are regenerated beside every PNG and are ignored;
+  the ones worth freezing get copied into `presentation/<date>/figures/`, which has its own rule.
+  Note the consequence for git worktrees: a CSV produced in one is now a real, trackable
+  file rather than something lost with the worktree — but **do not `git add` a symlinked CSV**.
+  Worktrees carry symlinks into the main checkout (see the Gotchas), and committing one stores an
+  absolute path that is broken everywhere else. Add output artifacts from the main checkout.
 - **`raw_data/` and `processed_data/` are large and not version-controlled.** The DB is a
   regenerable artifact — rebuild it from the raw CSVs, never hand-edit it. `raw_data/` is
   treated as read-only source data.
