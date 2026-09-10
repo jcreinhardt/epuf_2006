@@ -302,8 +302,13 @@ def fit_cell(sex, x, lowc, highc, start=None, gmm=None, mean_pen=None, smooth_pe
 
 
 # --------------------------------------------------------------------------- data
-def load_year(year):
+def load_year(year, fold=None):
     """Every positive-earnings row of one year as (sex, age, earnings).
+
+    `fold` keeps one half of the PEOPLE, split by hash(id) % 2 -- the held-out likelihood in
+    calibrate_smooth_frac.py. By person rather than by row, so a test person's earnings never
+    inform the training fit in any year. hash() is stable within one DuckDB build, and the
+    calibration output records which. None (the default) is every row, as before.
 
     Rows are ORDERED explicitly. DuckDB's scan is parallel and returns rows in a different
     order on every call, and the censored log-likelihood is a float sum over them -- so an
@@ -315,7 +320,8 @@ def load_year(year):
     q = ("SELECT d.sex, a.year - d.yob AS age, a.earnings "
          "FROM annual a JOIN demographic d USING(id) "
          f"WHERE a.year={int(year)} AND a.earnings>0 AND d.sex IN (1,2) "
-         "ORDER BY d.sex, age, a.earnings")
+         + (f"AND hash(a.id) % 2 = {int(fold)} " if fold is not None else "")
+         + "ORDER BY d.sex, age, a.earnings")
     out = subprocess.run(["duckdb", "-readonly", xm.DB, "-noheader", "-csv", "-c", q],
                          capture_output=True, text=True, check=True).stdout
     return pd.read_csv(StringIO(out), header=None, names=["sex", "age", "earnings"])
@@ -366,11 +372,11 @@ def stage0_year(args):
     fit at the diagonal iteration-0 W, then recompute the model-implied W at theta-hat and
     refit, `gmm_iters` times -- and the basin candidates are then built at the FROZEN final W,
     so the weight matrix never moves inside the joint solve."""
-    year, lam, gmm_iters, tgt_year = args
-    df = load_year(year)
+    year, lam, gmm_iters, tgt_year, fold, min_n = args
+    df = load_year(year, fold)
     highc = float(df["earnings"].max()) - xm.HIGH_MARGIN
     logcap = np.log(highc)
-    by_age = cells_by_age(df)
+    by_age = cells_by_age(df, min_n)
     lo_a, hi_a = MATCH_AGES
     ntot = sum(x.size for sex in SEXES for a, x in by_age[sex].items() if lo_a <= a <= hi_a)
     w_of = {sex: {a: (by_age[sex][a].size / ntot if lo_a <= a <= hi_a else 0.0)
@@ -412,7 +418,8 @@ def stage0_year(args):
             best_row[sex][a] = dict(cs[0]["row"], year=year, sex=sex, age=a,
                                     eta_year=0.0, **extra)
     return dict(year=year, highc=highc, logcap=logcap, w_of=w_of, ntot=ntot,
-                ages_win=ages_win, cand=cand, best_row=best_row, W=Wmat)
+                ages_win=ages_win, cand=cand, best_row=best_row, W=Wmat,
+                fold=fold, min_n=min_n)
 
 
 # --------------------------------------------------------------------------- Omega, rho
@@ -563,7 +570,8 @@ def solve_year(args):
     t_start = time.time()
     year, highc, logcap = meta["year"], meta["highc"], meta["logcap"]
     w_of, ages_win, cand = meta["w_of"], meta["ages_win"], meta["cand"]
-    by_age = cells_by_age(load_year(year))
+    # the SAME rows stage 0 saw: a fold-restricted meta must not be re-solved on everyone
+    by_age = cells_by_age(load_year(year, meta.get("fold")), meta.get("min_n", MIN_N))
     ages = {sex: sorted(cand[sex]) for sex in SEXES}
     winset = {sex: set(ages_win[sex]) for sex in SEXES}
     # per-obs rho -> summed units (the objective is a SUM over observations): multiply by the
@@ -768,7 +776,8 @@ def main(jobs=None, lam=LAM, gmm_iters=GMM_ITERS, rho=None, rho_steps=RHO_STEPS,
     print(f"=== stage 0: per-cell fits (lam={lam}, gmm_iters={gmm_iters}, "
           f"{sum(len(v) for v in by_year.values())} guv-covered cells) ===", flush=True)
     with ProcessPoolExecutor(max_workers=jobs) as ex:
-        metas = list(ex.map(stage0_year, [(y, lam, gmm_iters, by_year[y]) for y in YEARS]))
+        metas = list(ex.map(stage0_year, [(y, lam, gmm_iters, by_year[y], None, MIN_N)
+                                           for y in YEARS]))
     print(f"  {len(metas)} years, {time.time() - t0:.0f}s", flush=True)
 
     Omega, rho0 = freeze_omega_rho(metas, smooth_frac, pen_slots)
