@@ -145,7 +145,76 @@ python code/dynamics/plots/plot_agg_tax_dynamics.py [--profiles CSV] [--ages 20 
 python code/dynamics/plots/plot_cohort_profile.py [--cohort 1970]   # one cohort by age: model vs GKSW vs EPUF, mean log + mean level
 python code/dynamics/plots/plot_cms_selection.py    # CMS's process as they coded it: selection wedge
 python code/dynamics/plots/plot_gkos_ordinal.py     # ordinal-transform invariance to g(t)
+python code/dynamics/plots/plot_epuf_vs_model_hist.py [--years 1965 1995] [--fits CSV]
+python code/dynamics/plots/plot_cms_cross_section.py [--sex men|women] [--eras 1960 1975 1995 2005]
+python code/dynamics/plots/plot_cms_cross_section.py --year 1995   # that one year in full, + GKSW
+python code/dynamics/plots/plot_le_profiles.py [--yob YYYY] [--fits CSV] [--band 2]
 ```
+
+`plot_le_profiles.py` checks the fitted `g(t)` against the ONE thing GKOS (2021) targeted about
+earnings *levels* by age — their set-2 moment, average dollar earnings by age within lifetime
+(mean, ages 25–55)-earnings groups. Both sides: rank people by mean real earnings over 25–60
+(zeros filled in — `annual` is sparse), take ±2pt bands around p25/p50/p75, average earnings by
+age within each band, zeros included. The model is put through EPUF's own disclosure protection
+(`epuf_disclosure.py`, factored out of `plot_epuf_vs_model_hist.py` once a second script needed
+it) year by year before ranking and averaging, so both sides are censored at the same taxable
+maximum before comparison — load-bearing here because the one cohort with both a complete 25–70
+EPUF span and a directly-fitted (not extrapolated) `g(t)` is cohort 1957 (yob 1932), whose 20s
+sit in the tight-cap 1950s (cap binds 40%+ of men). p50 and p75 track reasonably (ratio of
+means-over-ages 0.82, 0.92); **p25 does not** (0.94 on the same summary, but the age *shape* is
+wrong): EPUF's p25 profile collapses from $19k at 34 to $5k by 53, the model's stays flat near
+$9–12k. Measured, not assumed — zero share by age, p25 band: **EPUF 17%→34%→74%** (ages
+25→42→60) **vs model 23%→41%→42%**, while earnings *conditional on working* in EPUF's p25 group
+RISE across the same span. So the EPUF profile falls from rising nonemployment among people who
+already have low lifetime earnings — disability, incarceration, informal work, or death showing
+up as zero years, none flagged in EPUF — not falling wages, and GKOS's single 1978–2013 male
+nonemployment logit has no channel for one subpopulation's exit becoming near-permanent, so it
+cannot reproduce it. `epuf_disclosure.epuf_codes_many` batches the per-year cap/code lookups
+into 3 DuckDB queries instead of one per year — a 36-year panel otherwise spawns 100+ processes
+against the 1.7 GB DB.
+
+`plot_epuf_vs_model_hist.py` is the distributional check on **our own** fits: the histogram of
+EPUF's positive covered earnings in a year against the one the GKOS process produces when
+driven by the fitted `g(t)` (default the canonical `smm_p50_relevelled_extrapolated`), cells
+mixed over cohorts and both sexes at EPUF's own (sex, age) weights. One u panel serves every
+cell, since g is a level shift and nothing feeds back on it. Measured, ages 20–70, conditional
+on positive earnings: **1965** is too low in the body and too thin in the tail (p25 −0.31,
+p50 −0.40 log points; 27% of the model above the $27.6k cap against EPUF's 41%), while
+**1995** has a good body and a far too high bottom (p10 +0.69, p50 −0.16, p75 −0.12, and 8%
+above the cap against 6%). **In 1965 the censored p90 gap of +0.71 is an artefact** — EPUF's
+p75 and p90 both sit ON the cap, so above it only the SHARE is informative, and that share
+reverses the sign. Both years share one failure the pipeline cannot fix: the model leaves 26%
+of the age cell without earnings against EPUF's 49% (1965) and 39% (1995), because the
+nonemployment logit is GKOS's 1978–2013 male estimate and only `g(t)` is re-estimated.
+
+**The model is put through EPUF's own disclosure protection before comparison** (`disclose`),
+so both histograms carry the same artefacts. The rule was recovered from the data, not
+assumed: one code below \$100 (the sub-\$100 mean, \$46 in 1951 → \$58 in 2006), random
+rounding to \$25 below \$1,000, \$100 below \$50,000 and \$1,000 at or above it (**that step
+is exact and nominal** — below it 11% of values are multiples of \$1,000, the chance rate; at
+and above it, 100%), a collapse value for amounts that round up to the cap without reaching
+it, and the cap. It is a fixed point on EPUF's own values (100.0% unchanged) and preserves the
+mean below the cap to 4e-4. **It changes only the two ends** — disclosed and undisclosed model
+curves are indistinguishable through the middle — so the mid-range gap is the process. The
+sub-\$100 code then makes the bottom failure countable: 2.3% (1965) and 0.8% (1995) of EPUF's
+earners sit on it, against 0.2% and 0.0% of the model's. **Bin width is set by the rounding
+grid**: at \$1,700 nominal in 1965 recordable values are 0.056 log apart, so a 90-bin
+histogram makes BOTH series a factor-of-two sawtooth; 45 bins keeps ≥4 grid points per bin.
+
+`plot_cms_cross_section.py` is the DISTRIBUTIONAL counterpart to the moment-fitting above: it
+forms the year-Y cross-section CMS's process implies (each age reading its own cohort's cubic)
+and compares it to EPUF's, on GKSW's own screen, GKSW's own deflator, and EPUF's own age
+composition. Measured: the model is above EPUF at EVERY percentile in every era, least at the
+median (+0.13 to +0.32 log points) and most at the bottom (p10 +0.5 to +1.0), so netted at the
+median the gap is a U — conditional on earning, the process's lower half is far too compressed
+(its nonemployment shock puts the low mass at exactly zero, so it has no part-year earners)
+and its upper half too wide. The miss grows with age (1995 men, p50: +0.18 / +0.27 / +0.30 for
+25-34 / 35-44 / 45-55). The `--year` figure adds GKSW's published quantiles, which sit within
+0.00–0.05 log points of EPUF through the middle, so the level error is CMS's own selection
+bias (+0.11 to +0.23 against their own target), not an EPUF-vs-GKSW data difference.
+**CMS's cubics start at cohort 1949**, so an early year has no profile for its old ages — 1960
+reaches only age 36 — and `usable_ages` cuts EPUF, the weights and the GKSW series to match,
+so an age-composition difference is never read as a distributional one.
 
 Estimation writes CSVs to `output/dynamics/`; every figure goes to `output/dynamics/plots/`.
 **The extrapolation CSV is load-bearing**: `plot_agg_tax_dynamics.py` reads it (default

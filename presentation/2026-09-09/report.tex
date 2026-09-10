@@ -1,0 +1,54 @@
+% Brief deck, 2026-09-09. Compile from the PROJECT ROOT (figure paths are root-relative):
+%   xelatex -output-directory=presentation/2026-09-09 presentation/2026-09-09/report.tex   (run twice)
+\documentclass[10pt,aspectratio=169]{beamer}
+
+\usetheme{metropolis}
+\metroset{progressbar=frametitle, numbering=fraction, block=fill}
+
+\usepackage{booktabs}
+\usepackage[font=footnotesize,labelfont=bf]{caption}
+
+\begin{document}
+
+% ======================================================================
+\begin{frame}{EPUF vs.\ the GKSW/GKOS sample}
+  \scriptsize
+  \renewcommand{\arraystretch}{1.05}
+  \begin{table}
+    \begin{tabular}{@{}p{2.3cm}p{4.9cm}p{5.4cm}@{}}
+      \toprule
+       & \textbf{EPUF} & \textbf{GKSW / GKOS} \\
+      \midrule
+      Sample & 1\% of all SSNs issued & 10\% of the Master Earnings File, commerce-and-industry sector only \\
+      Earnings & all SSA-covered earnings, incl.\ self-employment & W-2 wages only --- excl.\ self-employment, agriculture, private households, hospitals, education, public admin \\
+      Coverage & 1951--2006 & published moments: cohorts 1957--1983; conditional on being ``attached'' ($Y\ge Y_{\min}$, a quarter-time job at half min.\ wage) \\
+      Disclosure & bottom/top-coded, randomly rounded & none \\
+      \bottomrule
+    \end{tabular}
+  \end{table}
+\end{frame}
+
+% ======================================================================
+\begin{frame}{Aggregate taxable earnings, 1937--2100}
+  \begin{center}
+    \includegraphics[height=6.65cm]{output/cross_sections/plots/aggregate_taxable_ratio_full.png}
+  \end{center}
+\end{frame}
+
+% ======================================================================
+\begin{frame}{Cross-section: CMS model (corrected) vs.\ EPUF}
+  \begin{center}
+    \includegraphics[width=.98\linewidth]{output/dynamics/plots/epuf_vs_model_hist.png}
+  \end{center}
+  {\footnotesize Same disclosure protection applied to both.\par}
+\end{frame}
+
+% ======================================================================
+\begin{frame}{Average benefit at award, by sex}
+  \begin{center}
+    \includegraphics[width=.49\linewidth]{presentation/2026-09-09/figures/agg_benefit_award_level_men.png}%
+    \includegraphics[width=.49\linewidth]{presentation/2026-09-09/figures/agg_benefit_award_level_women.png}
+  \end{center}
+\end{frame}
+
+\end{document}
