@@ -111,6 +111,10 @@ python code/cross_sections/plots/plot_param.py [men|women|both] [csv] [suffix]  
 python code/cross_sections/plots/plot_guv_quantile_validation.py   # DATA-vs-DATA: raw EPUF quantiles vs GKSW sel0, complete cohorts
 python code/cross_sections/plots/plot_guv_gap_signature.py         # DATA-vs-DATA: the EPUF/GKSW log gap by quantile × year and × age
 python code/cross_sections/plots/plot_cross_section.py [age] [cohort] [sex] [--year Y] [--refit] [--overlay]   # one cell: histogram + fitted density
+# SMOOTH_FRAC by held-out likelihood -- 2 folds x 8 fractions, ~2.5 h at --jobs 10; see "rho is calibrated" below
+python code/cross_sections/calibrate_smooth_frac.py [--grid 0 1e-5 ...] [--folds 0 1] [--jobs N]
+python code/cross_sections/calibrate_smooth_frac.py --backfill   # per-year detail for cached surfaces, then both windows' picks
+python code/cross_sections/plots/plot_smooth_frac_calibration.py # the curve, both windows, the adopted value
 ```
 
 ### Lifecycle profile g(t) — `code/dynamics/`
@@ -327,9 +331,9 @@ benchmark, with the benchmark itself drawn as the labelled line at 1:
   * `output/cross_sections/plots/aggregate_taxable_ratio_full.png` — 1937–2100, the two models
     (EPUF has no years outside 1951–2006).
 
-What it shows: the two models agree to a few points from 1980 on and settle at 1.02 (parametric)
-and 1.07 (GKOS) on the TR projection. Before 1980 the GKOS line runs 0.87–0.91 while EPUF and the
-parametric surface sit at 0.96–0.98, and that gap is the **backward cohort extrapolation**, not
+What it shows: the two models agree to a few points from 1980 on and settle at ≈1.03 (parametric, at
+`SMOOTH_FRAC = 3e-4`) and 1.07 (GKOS) on the TR projection. Before 1980 the GKOS line runs 0.87–0.91 while
+EPUF and the parametric surface sit at 0.96–0.99, and that gap is the **backward cohort extrapolation**, not
 the fit: those years are carried by cohorts outside 1957–1983 whose shape is frozen at the
 1957–61 edge and whose level rides the wage index one for one.
 
@@ -521,9 +525,9 @@ and `smooth_pen=(wvec, g_target)`. Four details that matter:
 Warm inner-loop solves use loose L-BFGS tolerances (`WARM_OPTS`); cold multi-starts use
 `COLD_OPTS`. Parallelism is across years (`ProcessPoolExecutor`, BLAS pinned to one thread).
 
-**Runtime** ≈ **6 min** at `--jobs 8` (stage 0 ≈ 27 s; the joint solve ≈ 340 s wall / 2400 s CPU).
-The tight-cap years (1951–56) are slowest, ~80 s each: heavy censoring means a flat likelihood and
-more η iterations. That ~6 min is close to the *converged* cost, not a corner-cut — `GS_TOL` stops
+**Runtime** ≈ **13–14 min** — measured at λ = 0.5: 842 s at `--jobs 8` (stage 0 215 s), 763 s at
+`--jobs 10`; the pure-MLE predecessor took ~6 min. The slowest years are no longer the tight-cap
+1950s but 1985, 1957, 1971, 1961 and 1973, 121–157 s each (2026-09-09 run). That cost is close to the *converged* cost, not a corner-cut — `GS_TOL` stops
 a sweep once nothing moves and the η search exits at `MOMENT_TOL`, so extra passes mostly idle.
 `XS_CONT_PASSES` / `XS_ETA_PASSES` (env vars, defaults 2 / 3) raise the Gauss-Seidel effort;
 raising them to 3 / 4 costs only +13% for that reason. They are **environment** variables, not CLI
@@ -534,17 +538,17 @@ or `RHO_STEPS` — those change what is explored rather than how long it is poli
 **How much the constraint is worth**, measured on the in-sample uncapped mean per worker (the
 exact quantity stage 3 drives: cells weighted by their `n` share, analytic `dpln_mean`/`mix_mean`).
 Comparing `cross_section_params.csv` (stage 0, unconstrained) against
-`cross_section_params_smoothed.csv` over 1951–2006, **re-measured 2026-09-09 on the current
-estimator** (λ=0.5, quadratic penalty):
+`cross_section_params_smoothed.csv` over 1951–2006, **re-measured 2026-09-10 at the adopted
+`SMOOTH_FRAC = 3e-4`** (λ=0.5, quadratic penalty):
 
 | | mean ratio to ASS | range | men's cells at α≤1 |
 |---|---|---|---|
 | stage 0, unconstrained | **1.289** | 0.985–4.260 | 0 |
-| joint solve | **0.9997** | 0.994–1.003 | 0 |
+| joint solve | **0.9996** | 0.990–1.002 | 0 |
 
 So the constraint is worth ~29% on the level, and it is *tight*: the whole in-sample range spans
-0.9 of a percentage point. The predecessor pipeline reached 0.9955 [0.969–1.004] — better centred
-and four times tighter now. **The α≤1 escape is gone on both sides**: the old unconstrained fit
+1.2 percentage points. The predecessor pipeline reached 0.9955 [0.969–1.004] — better centred
+and three times tighter now. **The α≤1 escape is gone on both sides**: the old unconstrained fit
 left 374 of 3326 men's cells with an *infinite* uncapped mean, and `ALPHA_MIN` now rules it out
 structurally rather than relying on the pull, so the "undefined, not merely biased" warning that
 used to justify the constraint no longer applies to stage 0. The level argument still does.
@@ -560,22 +564,38 @@ used to justify the constraint no longer applies to stage 0. The level argument 
 - **ρ is calibrated against that.** Smoothing shrinks the cross-cell dispersion of the log-scale g
   slots, and E[X] is exponential in them, so by Jensen it biases the aggregate mean **down** —
   which η cannot undo, per the above. So ρ must be small enough that the smoothed fit still
-  *overshoots*. `SMOOTH_FRAC = 1e-4` was chosen from a **5-point sweep of full re-solves**
-  (`output/cross_sections/plots/rho_sweep_ass_tr_ratios.png`), which is also the recipe for retuning it:
+  *overshoots* — which is a ceiling, and a separate question from what the data prefer.
 
-  | SMOOTH_FRAC | in-sample uncapped mean [min–max] |
-  |---|---|
-  | 3e-5 | 0.9915 [0.955–1.001] |
-  | **1e-4** | **0.9923 [0.967–1.002]** |
-  | 3e-4 | 0.9907 [0.965–1.001] |
-  | 1e-3 | 0.9852 [0.952–1.001] |
-  | 3e-3 | 0.9776 [0.920–1.001] |
+  **`SMOOTH_FRAC = 3e-4`, chosen by held-out likelihood** (2026-09-10; `calibrate_smooth_frac.py`,
+  figure `plots/smooth_frac_calibration.png`). The previous 1e-4 came from a sweep judged on the
+  in-sample aggregate ratio, which cannot see ρ: the constraint pins it by construction in every year
+  η binds (52 of 56). The calibration fits one half of the **people** (`hash(id) % 2`) with the
+  production estimator and scores the censored likelihood of the other half: 2 folds × 8 fractions,
+  59.8M held-out person-years, paired, with per-year detail that reproduces the totals exactly.
 
-  1e-4 is an *interior* optimum (it beats less smoothing at 3e-5), so it is a real choice rather
-  than "as little smoothing as possible". ρ only moves the ratio in the η=0 years; elsewhere
-  the constraint pins the aggregate whatever ρ is. Retune with `--rho`, judging on the heatmaps plus
-  the uncapped ratio. **Note that a sweep leaves the canonical output CSVs holding the LAST ρ run** —
-  restore the chosen one before regenerating the heatmaps and the validation figure.
+  | window (fold-summed held-out negll) | rule pick | |
+  |---|---|---|
+  | 1957–2006, pre-registered | 3e-3 | the win is carried by 1957–79 (cap still binding, η ≈ 3) |
+  | **1980–2006, least censoring** | **3e-4** | band {3e-4, 1e-3}; 3e-3 resolved *worse*, +1,352 ± 33 |
+
+  The rule takes the smallest fraction whose summed gap to the best is within the two folds'
+  disagreement about that same gap. 1951–56 are excluded from both windows: men's α is unidentified
+  there, stage-0 basins sit 0.2 nats apart while disagreeing on log α by up to 6, and the penalty
+  spends ~half its budget pulling those arbitrary values together (open item 3). **The Jensen ceiling
+  settled it between the windows**, measured at full sample:
+
+  | SMOOTH_FRAC | uncapped / ASS | years at η = 0 | years >1% short |
+  |---|---|---|---|
+  | 1e-4 (previous) | 0.9997 [0.994–1.003] | 4 | 0 |
+  | **3e-4** | **0.9996 [0.990–1.002]** | 5 | 0 |
+  | 3e-3 | 0.9977 [0.974–1.006] | 17 | 5 (worst 2000, 0.974) |
+
+  Raising SMOOTH_FRAC past 3e-4 needs open item 5's two-sided pull first. Two measured facts that are
+  easy to get wrong: ρ₀ is **linear** in the fraction (1.35e-08 per 1e-4 at full sample, ~16% higher
+  on a half-sample), and stage 0 is **independent of SMOOTH_FRAC** — the 3e-4 run's raw fits are
+  bit-identical to the 1e-4 run's. A calibration writes only to its own files
+  (`smooth_frac_calibration*.csv`, the cache under `processed_data/`), so unlike the old sweep it
+  never leaves the canonical CSVs holding the last grid point.
 
 **Stage 2** (`extrapolate_params.py`) is unchanged in structure — shapes frozen at the nearest data
 edge (2000–04 forward, 1951–55 backward), locations rigid-shifted by the published/projected wage
@@ -589,8 +609,8 @@ posed **both** ways, and `k·α > 1` is enforced so every cell keeps a finite me
 
 Two caveats on that calibration, both visible in the validation figure: it makes pre-1951 *capped*
 earnings worse (~1.02 → ~1.07 at 1937), because under the very low pre-1951 cap most mass is above
-it, so moving α moves the capped mean too; and the implied k path is erratic (**1938 is a 10×
-outlier**, k=5.24 between neighbours of 0.49 and 0.78) because the wage index misses the 1938
+it, so moving α moves the capped mean too; and the implied k path is erratic (**1938 is the outlier**: k runs from
+0.33 in 1943 to **17.1 in 1938** on the current surface, up from 5.24 on the pre-restructure one) because the wage index misses the 1938
 downturn and α, the only free parameter, absorbs the whole residual. If that matters, the residual
 belongs in the location (ν) rather than the tail.
 
@@ -602,14 +622,11 @@ Known-outstanding as of the 2026-09-09 restructure (`estimate_cross_sections.py`
 these is a bug in what is committed; they are things measured-and-deferred, listed so a later
 session does not have to rediscover them. Roughly in order of how much they affect results.
 
-1. **`SMOOTH_FRAC = 1e-4` is stale, and so is the sweep table above it.** That value came from
-   a 5-point sweep of full re-solves done under the *Huber* loss and the *old* constraint
-   arrangement. Both changed. ρ₀ has since been observed at 7.12e-08 (Huber), 1.35e-08
-   (quadratic, six slots) and 2.15e-08 (quadratic, four slots) for the same `SMOOTH_FRAC`, so
-   the number no longer means what the table says. **Re-sweep before quoting the table or
-   trusting the smoothing strength.** ~5 full re-solves; budget ~28 min each with the
-   constraint on. The old ceiling argument (ρ capped because smoothing biases the aggregate
-   down by Jensen and η can only thin) still applies, so sweep upward with that in view.
+1. ~~`SMOOTH_FRAC = 1e-4` is stale.~~ **Done 2026-09-10**: recalibrated by held-out likelihood to
+   **3e-4** (see "ρ is calibrated against that"). What it left open: the pre-registered 1957+ window
+   picks 3e-3, and 1957–79 is where the two windows part company. That era's gain from heavy
+   smoothing may be the unidentified-α effect of 1951–56 in milder form — plausible, not shown.
+   Fixing open items 3 and 5 is how to find out, and item 5 is what would make a larger ρ safe.
 
 2. ~~The canonical CSVs under `output/` predate all of this.~~ **Done 2026-09-09** (`d1e995e`):
    regenerated at the current defaults, and the numbers above re-measured from them. The
@@ -708,7 +725,9 @@ session does not have to rediscover them. Roughly in order of how much they affe
 - **The cross-section section is four files over a shared model layer**, and the split is by
   ROLE, not by estimator: `xs_model.py` (distributions, `g(θ)`, `E[X]`, the structural boxes),
   `obj_mle.py` and `obj_gmm.py` (one data term each, no optimizer), `estimate_cross_sections.py`
-  (the solver and the only CLI), `extrapolate_params.py` (off the data edges). There is no longer
+  (the solver and its CLI), `extrapolate_params.py` (off the data edges). `calibrate_smooth_frac.py`
+  is a second CLI with a different job — tuning `SMOOTH_FRAC`, never estimating — and imports the
+  solver rather than duplicating any of it. There is no longer
   a module per estimator — the two data terms are combined in ONE solve weighted by `--lam`, so
   what used to be `--mode mle` vs `--mode mle-gmm` is now a point on a continuum. `estimate_g_cohort.py`
   still dispatches on `--mode` over `gcohort_model.py` / `gcohort_ols.py` / `gcohort_smm.py`,

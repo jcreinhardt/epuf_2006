@@ -4,8 +4,9 @@
 Reads calibrate_smooth_frac.py's two CSVs -- the per-(fold, frac) summary and the per-year
 held-out detail -- and checks that the detail reproduces the summary before drawing anything.
 
-WHY THE CURVE IS SPLIT BY ERA. The held-out criterion is decided on 1957-2006, with all years
-drawn beside it as context. MEASURED on the first grid points: the total over every year is
+WHY THE CURVE IS SPLIT BY ERA. 1957-2006 is the pre-registered window; the adopted SMOOTH_FRAC
+was read on 1980-2006, and estimate_cross_sections.py records why the two differ and which was
+taken (the constraint's Jensen ceiling decided it). MEASURED on the first grid points: the total over every year is
 dominated by 1951-56, six years holding 6% of the held-out observations, in which men's upper
 tail alpha is unidentified under a cap 70-75% of prime-age men exceed. Stage-0 basins there sit
 0.2 nats apart (5-10 nats later) while disagreeing on log alpha by up to 6; the roughness
@@ -17,10 +18,13 @@ years after 1980. 1951-56 also carry no GKSW targets and eta ~ 8. The fix for th
 CLAUDE.md open item 3 (men's tail slot as a functional, not raw log alpha), not a criterion.
 
 TOP, side by side on one shared y-axis: held-out negll of each fold's test half above that
-fold's best grid point (gray), and the two folds summed (accent) -- LEFT over 1957-2006, which
-decides; RIGHT over all years, for context. BOTTOM, one measure per panel on the same x-axis:
-rho0, men's log-alpha roughness, years left at eta = 0, the in-sample uncapped ratio, the GKSW
-criterion Sum n Q, and how many 1957-2006 years prefer each fraction to no smoothing at all.
+fold's best grid point (gray), and the two folds summed (accent) -- LEFT over 1957-2006, the
+pre-registered window; RIGHT over 1980-2006, the least-censored years. Each rings its own rule
+pick (the smallest fraction within the folds' noise band). The ADOPTED value is drawn as its own
+accent line, read from estimate_cross_sections.SMOOTH_FRAC, so the figure cannot drift from what
+production uses. BOTTOM, one measure per panel on the same x-axis: rho0, men's log-alpha
+roughness, years left at eta = 0, the in-sample uncapped ratio, the GKSW criterion Sum n Q, and
+how many 1980-2006 years prefer each fraction to no smoothing at all.
 
 smooth_frac = 0 has no place on a log axis: it is an unconnected marker one step left of the
 smallest positive fraction, behind a break glyph drawn on the spine only. The top y-axis is
@@ -44,7 +48,8 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator, NullLocator
 
 sys.path.insert(0, "code/cross_sections")    # run from the project root, per repo convention
-from calibrate_smooth_frac import DECIDE_FROM, decide   # noqa: E402 -- ONE definition, estimation side
+from calibrate_smooth_frac import DECIDE_FROM, INFORMATIVE_FROM, decide   # noqa: E402 -- ONE definition
+from estimate_cross_sections import SMOOTH_FRAC as ADOPTED                  # noqa: E402 -- what production uses
 
 CSV = "output/cross_sections/smooth_frac_calibration.csv"
 BY_YEAR = "output/cross_sections/smooth_frac_calibration_by_year.csv"
@@ -173,12 +178,15 @@ def main():
     X, zero_at, pos = xpos(fracs)
     has_zero = 0.0 in fracs
     years = sorted(by.year.unique())
-    window = criterion(by, [y for y in years if y >= DECIDE_FROM])
-    context = criterion(by, years)
-    # The pre-registered rule needs both folds (its noise band IS their disagreement); with one fold
-    # the figure can only ring the raw argmin, and says so.
-    rule = decide(by) if len(folds) == 2 else None
-    chosen = rule["chosen"] if rule else window[2]
+    pre = criterion(by, [y for y in years if y >= DECIDE_FROM])
+    inf = criterion(by, [y for y in years if y >= INFORMATIVE_FROM])
+    # The rule needs both folds (its noise band IS their disagreement); with one fold each panel can
+    # only ring its raw argmin, and says so.
+    two = len(folds) == 2
+    rule = decide(by, DECIDE_FROM) if two else None
+    rule_inf = decide(by, INFORMATIVE_FROM) if two else None
+    pick_pre = rule["chosen"] if two else pre[2]
+    pick_inf = rule_inf["chosen"] if two else inf[2]
 
     fig = plt.figure(figsize=(13, 7.8), facecolor=SURFACE)
     gs = fig.add_gridspec(2, 6, height_ratios=[1.3, 1], hspace=0.45, wspace=0.5)
@@ -186,21 +194,25 @@ def main():
     right = fig.add_subplot(gs[0, 3:], sharey=left)
     for ax in (left, right):
         ax.set_yscale("symlog", linthresh=10)
-    lab = (f"chosen  {chosen:g}" + ("" if np.isclose(chosen, window[2]) else f"   (raw best {window[2]:g})")
-           if rule else f"raw best  {chosen:g}  (one fold: no noise band)")
-    top_panel(left, window, X, zero_at, pos, has_zero,
-              f"Decides: held-out negll, {DECIDE_FROM}–{years[-1]}", mark=chosen, mark_label=lab)
-    top_panel(right, context, X, zero_at, pos, has_zero,
-              f"Context: all years {years[0]}–{years[-1]}, incl. unidentified-alpha 1951–56")
+    kind = "rule pick" if two else "raw best (one fold)"
+    top_panel(left, pre, X, zero_at, pos, has_zero,
+              f"Pre-registered window: {DECIDE_FROM}–{years[-1]}", mark=pick_pre, mark_label=f"{kind}  {pick_pre:g}")
+    top_panel(right, inf, X, zero_at, pos, has_zero,
+              f"Least censoring: {INFORMATIVE_FROM}–{years[-1]}", mark=pick_inf, mark_label=f"{kind}  {pick_inf:g}")
+    for ax in (left, right):
+        if ADOPTED in X:
+            ax.axvline(X[ADOPTED], color=ACCENT, lw=1.2, alpha=0.6, zorder=1)
+            ax.annotate(f"adopted  {ADOPTED:g}", (X[ADOPTED], 1), xycoords=("data", "axes fraction"),
+                        xytext=(4, -26), textcoords="offset points", fontsize=8.5, color=INK)
     left.set_ylabel("held-out negll above best (nats, symlog)", fontsize=9, color=INK)
-    best = chosen                                          # bottom-row guides follow the CHOICE
+    best = ADOPTED if ADOPTED in X else pick_pre           # bottom-row guides follow what production uses
 
     # years in the deciding window that prefer each fraction to no smoothing at all
     g = by.groupby(["smooth_frac", "year"]).agg(v=("heldout_negll", "sum"), nf=("fold", "nunique"))
     g = g[g.nf == len(folds)].v.unstack("year")
     wins = None
     if has_zero and len(g) > 1:
-        delta = g.sub(g.loc[0.0], axis=1)[[c for c in g.columns if c >= DECIDE_FROM]]
+        delta = g.sub(g.loc[0.0], axis=1)[[c for c in g.columns if c >= INFORMATIVE_FROM]]
         wins = (delta < 0).sum(axis=1).drop(index=0.0)
         n_dec = int(delta.notna().sum(axis=1).max())
 
@@ -209,7 +221,7 @@ def main():
               ("eta0_years", "years left\nat eta = 0", None),
               ("unc_ratio_mean", "in-sample\nuncapped / ASS", None),
               ("gmm_nq", "GKSW criterion\nSum n Q", None),
-              ("wins", f"years {DECIDE_FROM}+ beating\nno smoothing", None)]
+              ("wins", f"years {INFORMATIVE_FROM}+ beating\nno smoothing", None)]
     for k, (col, title, yscale) in enumerate(panels):
         ax = fig.add_subplot(gs[1, k])
         if yscale:
@@ -253,23 +265,24 @@ def main():
                                   label="both folds (summed on top, mean below)"))
     fig.legend(handles=handles, loc="upper right", frameon=False, fontsize=9, labelcolor=INK,
                bbox_to_anchor=(0.985, 0.995))
-    agree = np.isclose(window[2], context[2])
+    on_grid = ADOPTED in X
     notes = [f"source: {os.path.basename(a.csv)} + {os.path.basename(a.by_year)}", f"folds {list(folds)}",
-             f"lam={d.lam.iloc[0]}", f"decided on {DECIDE_FROM}+",
+             f"lam={d.lam.iloc[0]}",
              "paired" if not unpaired else f"NOT PAIRED: fold(s) {unpaired}",
              "detail reproduces sweep" if not len(mismatch) else "DETAIL DOES NOT REPRODUCE SWEEP",
-             "criteria agree" if agree else f"CRITERIA DISAGREE: {DECIDE_FROM}+ raw best {window[2]:g}, all years {context[2]:g}"]
-    if rule:
-        notes.append(f"chosen {chosen:g} = smallest within noise of {rule['best']:g}, band {[f'{c:g}' for c in rule['band']]}"
-                     + ("  ** EDGE: not located **" if rule["edge"] else ""))
+             f"rule picks {pick_pre:g} ({DECIDE_FROM}+) / {pick_inf:g} ({INFORMATIVE_FROM}+)",
+             f"ADOPTED SMOOTH_FRAC {ADOPTED:g}" + ("" if on_grid else " -- NOT ON THE GRID")]
+    if rule and (rule["edge"] or rule_inf["edge"]):
+        notes.append("** EDGE: an optimum is not located **")
     if no_detail:
         notes.append(f"{len(no_detail)} point(s) awaiting detail")
-    flagged = bool(unpaired or len(mismatch) or not agree or no_detail or (rule and rule["edge"]))
+    flagged = bool(unpaired or len(mismatch) or no_detail or not on_grid
+                   or (rule and (rule["edge"] or rule_inf["edge"])))
     fig.text(0.01, 0.005, "   ".join(notes), fontsize=7, color=INK if flagged else GRAY)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     for ext in ("png", "pdf"):
         fig.savefig(f"{a.out}.{ext}", dpi=200, bbox_inches="tight", facecolor=SURFACE)
-    print(f"wrote {a.out}.png/.pdf   {DECIDE_FROM}+ raw best {window[2]:g} -> CHOSEN {chosen:g}; all years raw best {context[2]:g}"
+    print(f"wrote {a.out}.png/.pdf   rule picks {pick_pre:g} ({DECIDE_FROM}+), {pick_inf:g} ({INFORMATIVE_FROM}+); adopted {ADOPTED:g}"
           + ("" if len(folds) > 1 else "   (single fold -- not yet a calibration)"))
     if wins is not None:
         print("   years beating no smoothing: " + ", ".join(f"{f:g}: {int(v)}/{n_dec}" for f, v in wins.items()))

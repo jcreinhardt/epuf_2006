@@ -96,7 +96,8 @@ OUT = Path("output/cross_sections/smooth_frac_calibration.csv")
 BY_YEAR = Path("output/cross_sections/smooth_frac_calibration_by_year.csv")
 CACHE = Path("processed_data/smooth_frac_cache")
 GRID = [0.0, 1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2]
-DECIDE_FROM = 1957                          # first year of the deciding window; see the docstring
+DECIDE_FROM = 1957                          # the PRE-REGISTERED window; see the docstring
+INFORMATIVE_FROM = 1980                     # the least-censored window, on which SMOOTH_FRAC was adopted
 FIELDS = ["fold", "smooth_frac", "rho0", "heldout_negll", "heldout_nobs", "heldout_bad_cells",
           "unc_ratio_mean", "unc_ratio_min", "unc_ratio_max", "eta0_years", "gmm_nq",
           "alpha_rough_men", "solve_sec", "lam", "min_n", "duckdb"]
@@ -329,7 +330,9 @@ def summarize():
     if not BY_YEAR.exists():
         return
     b = pd.read_csv(BY_YEAR)
-    for lab, sub in ((f"{DECIDE_FROM}+ (DECIDES)", b[b.year >= DECIDE_FROM]), ("all years", b)):
+    for lab, sub in ((f"{DECIDE_FROM}+ (pre-registered)", b[b.year >= DECIDE_FROM]),
+                     (f"{INFORMATIVE_FROM}+ (least censoring)", b[b.year >= INFORMATIVE_FROM]),
+                     ("all years", b)):
         w = sub.groupby(["smooth_frac", "fold"]).heldout_negll.sum().unstack("fold").dropna()
         if w.empty:
             continue
@@ -337,11 +340,13 @@ def summarize():
         print(f"\n{lab}: fold-summed held-out negll above best -> best SMOOTH_FRAC {tot.idxmin():g}")
         print((tot - tot.min()).round(1).to_string())
     if b.fold.nunique() == 2:
-        dd = decide(b)
-        print(f"\nDECISION ({DECIDE_FROM}+, pre-registered rule): raw best {dd['best']:g}   "
-              f"within noise {[f'{c:g}' for c in dd['band']]}   -> CHOSEN SMOOTH_FRAC = {dd['chosen']:g}"
-              + ("   ** OPTIMUM ON THE GRID EDGE: extend before choosing **" if dd["edge"] else ""))
-        print(dd["table"].round(1).to_string())
+        for start, lab in ((DECIDE_FROM, "pre-registered"), (INFORMATIVE_FROM, "least censoring")):
+            dd = decide(b, start)
+            print(f"\nRULE on {start}+ ({lab}): raw best {dd['best']:g}   within noise "
+                  f"{[f'{c:g}' for c in dd['band']]}   -> rule pick {dd['chosen']:g}"
+                  + ("   ** OPTIMUM ON THE GRID EDGE: extend before choosing **" if dd["edge"] else ""))
+            print(dd["table"].round(1).to_string())
+        print(f"\nADOPTED: SMOOTH_FRAC = {X.SMOOTH_FRAC:g} (estimate_cross_sections.py records why)")
 
 
 def main():

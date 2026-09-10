@@ -108,17 +108,27 @@ NG         = 6                  # length of the functional vector g
 
 # rho0 target: the penalty is worth this fraction of the fit at the unsmoothed solution.
 #
-# 1e-4 IS INHERITED FROM THE CONSTRAINED ESTIMATOR AND IS PROBABLY NOW TOO SMALL. It was
-# chosen by a 5-point sweep of full re-solves under the aggregate constraint, where rho traded
-# against eta in one direction: smoothing shrinks the cross-cell dispersion of the log-scale g
-# slots, E[X] is exponential in them, so by Jensen the year's aggregate mean is biased DOWN,
-# and eta > 0 can only thin -- so rho had to stay small enough that the smoothed fit still
-# OVERSHOT the benchmark. That ceiling is gone with the constraint off by default, and the
-# binding limit is now only smearing genuine regime switches -- and with the Huber loss gone,
-# only the named FREE_STEPS window is protected from that. The predecessor GMM module ran 1e-3 for exactly this reason. Re-sweep with
-# --smooth-frac before trusting the smoothed surface; judge on the heatmaps and on
-# plot_agg_tax_total, which is now an independent check rather than a restatement of the fit.
-SMOOTH_FRAC = 1e-4
+# CHOSEN BY HELD-OUT LIKELIHOOD, 2026-09-10 (calibrate_smooth_frac.py; its figure is
+# plots/smooth_frac_calibration.png). The previous 1e-4 came from a sweep judged on the in-sample
+# aggregate ratio -- which the constraint pins by construction in every year eta binds, so it
+# could not see rho -- and was run under the Huber loss. The replacement fits one half of the
+# PEOPLE and scores the censored likelihood of the other half: 2 folds x 8 fractions, 59.8M
+# held-out person-years, paired.
+#
+# WHY 3e-4 AND NOT THE 3e-3 THE PRE-REGISTERED RULE PICKED. On 1957-2006 the rule picks 3e-3, but
+# that win is carried by 1957-79, still under a binding cap with eta ~ 3, where men's upper tail
+# is partly unidentified -- the mechanism that already excludes 1951-56 (CLAUDE.md open item 3).
+# On 1980-2006, the least-censored years and the ones the criterion is most trustworthy in, the
+# same rule picks 3e-4 (band 3e-4, 1e-3) and 3e-3 is resolved WORSE, +1,352 +/- 33 nats.
+#
+# AND THE JENSEN CEILING BINDS. Smoothing shrinks the cross-cell dispersion of the log-scale g
+# slots and E[X] is exponential in them, so the year's aggregate mean is biased DOWN -- and eta
+# can only thin, so a year left short stays short. MEASURED at full sample, uncapped / ASS:
+#   1e-4   0.9997 [0.994-1.003]   eta = 0 in  4 years   0 years >1% short
+#   3e-4   0.9996 [0.990-1.002]   eta = 0 in  5 years   0 years >1% short
+#   3e-3   0.9977 [0.974-1.006]   eta = 0 in 17 years   5 years >1% short (worst 2000, 0.974)
+# Raising SMOOTH_FRAC past 3e-4 needs the two-sided pull of CLAUDE.md open item 5 first.
+SMOOTH_FRAC = 3e-4
 RHO_STEPS  = 4                  # rho-continuation steps
 RHO0_START = 30.0               # continuation begins at RHO0_START * rho_target
 # Gauss-Seidel effort. Read from the environment because the year workers are SPAWNED (macOS),
