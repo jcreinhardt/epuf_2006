@@ -108,17 +108,27 @@ NG         = 6                  # length of the functional vector g
 
 # rho0 target: the penalty is worth this fraction of the fit at the unsmoothed solution.
 #
-# 1e-4 IS INHERITED FROM THE CONSTRAINED ESTIMATOR AND IS PROBABLY NOW TOO SMALL. It was
-# chosen by a 5-point sweep of full re-solves under the aggregate constraint, where rho traded
-# against eta in one direction: smoothing shrinks the cross-cell dispersion of the log-scale g
-# slots, E[X] is exponential in them, so by Jensen the year's aggregate mean is biased DOWN,
-# and eta > 0 can only thin -- so rho had to stay small enough that the smoothed fit still
-# OVERSHOT the benchmark. That ceiling is gone with the constraint off by default, and the
-# binding limit is now only smearing genuine regime switches -- and with the Huber loss gone,
-# only the named FREE_STEPS window is protected from that. The predecessor GMM module ran 1e-3 for exactly this reason. Re-sweep with
-# --smooth-frac before trusting the smoothed surface; judge on the heatmaps and on
-# plot_agg_tax_total, which is now an independent check rather than a restatement of the fit.
-SMOOTH_FRAC = 1e-4
+# CHOSEN BY HELD-OUT LIKELIHOOD, 2026-09-10 (calibrate_smooth_frac.py; its figure is
+# plots/smooth_frac_calibration.png). The previous 1e-4 came from a sweep judged on the in-sample
+# aggregate ratio -- which the constraint pins by construction in every year eta binds, so it
+# could not see rho -- and was run under the Huber loss. The replacement fits one half of the
+# PEOPLE and scores the censored likelihood of the other half: 2 folds x 8 fractions, 59.8M
+# held-out person-years, paired.
+#
+# WHY 3e-4 AND NOT THE 3e-3 THE PRE-REGISTERED RULE PICKED. On 1957-2006 the rule picks 3e-3, but
+# that win is carried by 1957-79, still under a binding cap with eta ~ 3, where men's upper tail
+# is partly unidentified -- the mechanism that already excludes 1951-56 (CLAUDE.md open item 3).
+# On 1980-2006, the least-censored years and the ones the criterion is most trustworthy in, the
+# same rule picks 3e-4 (band 3e-4, 1e-3) and 3e-3 is resolved WORSE, +1,352 +/- 33 nats.
+#
+# AND THE JENSEN CEILING BINDS. Smoothing shrinks the cross-cell dispersion of the log-scale g
+# slots and E[X] is exponential in them, so the year's aggregate mean is biased DOWN -- and eta
+# can only thin, so a year left short stays short. MEASURED at full sample, uncapped / ASS:
+#   1e-4   0.9997 [0.994-1.003]   eta = 0 in  4 years   0 years >1% short
+#   3e-4   0.9996 [0.990-1.002]   eta = 0 in  5 years   0 years >1% short
+#   3e-3   0.9977 [0.974-1.006]   eta = 0 in 17 years   5 years >1% short (worst 2000, 0.974)
+# Raising SMOOTH_FRAC past 3e-4 needs the two-sided pull of CLAUDE.md open item 5 first.
+SMOOTH_FRAC = 3e-4
 RHO_STEPS  = 4                  # rho-continuation steps
 RHO0_START = 30.0               # continuation begins at RHO0_START * rho_target
 # Gauss-Seidel effort. Read from the environment because the year workers are SPAWNED (macOS),
@@ -302,8 +312,13 @@ def fit_cell(sex, x, lowc, highc, start=None, gmm=None, mean_pen=None, smooth_pe
 
 
 # --------------------------------------------------------------------------- data
-def load_year(year):
+def load_year(year, fold=None):
     """Every positive-earnings row of one year as (sex, age, earnings).
+
+    `fold` keeps one half of the PEOPLE, split by hash(id) % 2 -- the held-out likelihood in
+    calibrate_smooth_frac.py. By person rather than by row, so a test person's earnings never
+    inform the training fit in any year. hash() is stable within one DuckDB build, and the
+    calibration output records which. None (the default) is every row, as before.
 
     Rows are ORDERED explicitly. DuckDB's scan is parallel and returns rows in a different
     order on every call, and the censored log-likelihood is a float sum over them -- so an
@@ -315,7 +330,8 @@ def load_year(year):
     q = ("SELECT d.sex, a.year - d.yob AS age, a.earnings "
          "FROM annual a JOIN demographic d USING(id) "
          f"WHERE a.year={int(year)} AND a.earnings>0 AND d.sex IN (1,2) "
-         "ORDER BY d.sex, age, a.earnings")
+         + (f"AND hash(a.id) % 2 = {int(fold)} " if fold is not None else "")
+         + "ORDER BY d.sex, age, a.earnings")
     out = subprocess.run(["duckdb", "-readonly", xm.DB, "-noheader", "-csv", "-c", q],
                          capture_output=True, text=True, check=True).stdout
     return pd.read_csv(StringIO(out), header=None, names=["sex", "age", "earnings"])
@@ -366,11 +382,11 @@ def stage0_year(args):
     fit at the diagonal iteration-0 W, then recompute the model-implied W at theta-hat and
     refit, `gmm_iters` times -- and the basin candidates are then built at the FROZEN final W,
     so the weight matrix never moves inside the joint solve."""
-    year, lam, gmm_iters, tgt_year = args
-    df = load_year(year)
+    year, lam, gmm_iters, tgt_year, fold, min_n = args
+    df = load_year(year, fold)
     highc = float(df["earnings"].max()) - xm.HIGH_MARGIN
     logcap = np.log(highc)
-    by_age = cells_by_age(df)
+    by_age = cells_by_age(df, min_n)
     lo_a, hi_a = MATCH_AGES
     ntot = sum(x.size for sex in SEXES for a, x in by_age[sex].items() if lo_a <= a <= hi_a)
     w_of = {sex: {a: (by_age[sex][a].size / ntot if lo_a <= a <= hi_a else 0.0)
@@ -412,7 +428,8 @@ def stage0_year(args):
             best_row[sex][a] = dict(cs[0]["row"], year=year, sex=sex, age=a,
                                     eta_year=0.0, **extra)
     return dict(year=year, highc=highc, logcap=logcap, w_of=w_of, ntot=ntot,
-                ages_win=ages_win, cand=cand, best_row=best_row, W=Wmat)
+                ages_win=ages_win, cand=cand, best_row=best_row, W=Wmat,
+                fold=fold, min_n=min_n)
 
 
 # --------------------------------------------------------------------------- Omega, rho
@@ -563,7 +580,8 @@ def solve_year(args):
     t_start = time.time()
     year, highc, logcap = meta["year"], meta["highc"], meta["logcap"]
     w_of, ages_win, cand = meta["w_of"], meta["ages_win"], meta["cand"]
-    by_age = cells_by_age(load_year(year))
+    # the SAME rows stage 0 saw: a fold-restricted meta must not be re-solved on everyone
+    by_age = cells_by_age(load_year(year, meta.get("fold")), meta.get("min_n", MIN_N))
     ages = {sex: sorted(cand[sex]) for sex in SEXES}
     winset = {sex: set(ages_win[sex]) for sex in SEXES}
     # per-obs rho -> summed units (the objective is a SUM over observations): multiply by the
@@ -768,7 +786,8 @@ def main(jobs=None, lam=LAM, gmm_iters=GMM_ITERS, rho=None, rho_steps=RHO_STEPS,
     print(f"=== stage 0: per-cell fits (lam={lam}, gmm_iters={gmm_iters}, "
           f"{sum(len(v) for v in by_year.values())} guv-covered cells) ===", flush=True)
     with ProcessPoolExecutor(max_workers=jobs) as ex:
-        metas = list(ex.map(stage0_year, [(y, lam, gmm_iters, by_year[y]) for y in YEARS]))
+        metas = list(ex.map(stage0_year, [(y, lam, gmm_iters, by_year[y], None, MIN_N)
+                                           for y in YEARS]))
     print(f"  {len(metas)} years, {time.time() - t0:.0f}s", flush=True)
 
     Omega, rho0 = freeze_omega_rho(metas, smooth_frac, pen_slots)
