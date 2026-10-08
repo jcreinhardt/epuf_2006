@@ -10,9 +10,23 @@ absorbed (A), and the order of events at age a (t = (a-24)/10) is:
   2. ABSORBING EXIT -- retirement / incapacitation / leaving covered work for good:
          h(a, z) = logistic(k_sex + k_t*t + k_t2*t^2 + k_55*(a-55)_+/10 + k_62*(a-62)_+/10 + k_z*z)
      once absorbed, zero earnings in every later year;
-  3. TEMPORARY NONEMPLOYMENT, GKOS's logit with the intercept made a function of SEX x LAST YEAR'S STATUS:
-         p(a, z, s, e_{a-1}) = logistic(a_{s, e_{a-1}} + b*t + (c + d*t)*x),  (b, c, d) = GKOS's,
-     where the index x is GKOS's z with two optional changes,
+  3. TEMPORARY NONEMPLOYMENT, GKOS's logit with the intercept made a function of SEX x PAST ATTACHMENT:
+         p(a, z, s, A) = logistic(a_{s,E} + (a_{s,N} - a_{s,E}) * (1 - A) + b*t + (c + d*t)*x),  (b, c, d) = GKOS's,
+     where A in [0, 1] is the person's attachment coming into the year, one of three forms (`attachment`):
+         dummy   A = e_{a-1}                                  (ten_K <= 1, ten_delta = 0: last year's status)
+         ramp    A = min(L, ten_K) / ten_K                    L = consecutive years employed up to a-1 (0 if out)
+         stock   A = ten_delta * A_{a-1} + (1 - ten_delta) * e_{a-1}   an exponentially weighted employment history
+     so a_{s,N} - a_{s,E} is the gap between someone with no attachment and someone fully attached, and the ramp
+     (cap ten_K years) or the stock (decay ten_delta) says how fast employment builds attachment -- and, for the
+     stock, how fast years out erode it. At most one of ten_K > 1, ten_delta > 0 is allowed. A fourth term,
+     ten_rho, leaves the intercept alone and attenuates the EARNINGS SLOPE with tenure instead,
+         (c + d*t) * x * (1 - ten_rho * min(L, 10) / 10),
+     so that someone ten years into a spell responds to a bad draw with (1 - ten_rho) of the slope (0 = GKOS).
+     Two GRADIENT terms keep the dummy's step at 0 -> 1 and add a concave decline in tenure after it, both zero
+     at L = 0 and L = 1 (so they change nothing for the out and the newly re-entered):
+         - ten_gam * log(L) / log(10)        (ten_gam = the gain in attachment at ten years, unbounded in L)
+         - ten_hyp * (1 - 1/L)               (ten_hyp = the long-run gain, 90% of it reached by ten years)
+     The index x is GKOS's z with two optional changes,
          x = min(z, zbar_s) + kappa*(alpha + beta*t):
      a CAP (above zbar_s everybody faces the same probability; zbar = inf is GKOS) and a loading on the HIP
      component alpha + beta*t (kappa = 0 is GKOS). The state space of the block is (z, alpha, beta, e_{a-1});
@@ -20,7 +34,8 @@ absorbed (A), and the order of events at age a (t = (a-24)/10) is:
 
 GKOS is nested: a_{s,E} = a_{s,N} = -3.353 and k -> -inf. The status at 19, e_19, is an initial condition the
 lagged intercept needs: not employed with probability logistic(pi_s), or, if pi_s is NaN, by one burn-in year --
-the temporary logit at age 19 with the EMPLOYED intercept and z at 20 (`p_init`), which adds no parameter.
+the temporary logit at age 19 with the EMPLOYED intercept and z at 20 (`p_init`), which adds no parameter. The
+tenure forms start from it too: at 20, L = e_19 (one year of tenure if employed at 19) and A = e_19.
 
 All randomness is drawn ONCE (`draw_shocks`) and held fixed across parameter values (common random numbers), so the
 simulated moments are a deterministic function of theta.
@@ -31,8 +46,11 @@ NAMES = ["a_m_E", "a_m_N", "a_f_E", "a_f_N",            # temporary-nonemploymen
          "k_m", "k_f", "k_t", "k_55", "k_62", "k_z",      # absorbing-exit hazard
          "pi_m", "pi_f",                                   # logit P(not employed at 19)
          "k_t2",                                            # hazard: quadratic age term
-         "kappa", "zbar_m", "zbar_f"]                        # index: HIP loading, cap on z by sex (appended, so
+         "kappa", "zbar_m", "zbar_f",                       # index: HIP loading, cap on z by sex (appended, so
                                                             # shorter parameter files pad with GKOS_START)
+         "ten_K", "ten_delta",                               # attachment: ramp cap (years), stock decay
+         "ten_rho",                                          # attenuation of the earnings slope by tenure
+         "ten_gam", "ten_hyp"]                               # tenure gradients: log shape, hyperbolic shape
 A0, A1 = 20, 65
 
 
@@ -65,8 +83,20 @@ def employment(theta, sh, sex, ages, q, E):
     s = "m" if sex == 1 else "f"
     p = dict(a_E=th[f"a_{s}_E"], a_N=th[f"a_{s}_N"], k=th[f"k_{s}"], k_t=th["k_t"], k_55=th["k_55"],
              k_62=th["k_62"], k_z=th["k_z"], pi=th[f"pi_{s}"], k_t2=th["k_t2"], kappa=th["kappa"],
-             zbar=th[f"zbar_{s}"])
+             zbar=th[f"zbar_{s}"], ten_K=th["ten_K"], ten_delta=th["ten_delta"], ten_rho=th["ten_rho"],
+             ten_gam=th["ten_gam"], ten_hyp=th["ten_hyp"])
     return employment_one(p, sh, ages, q, E)
+
+
+def attachment(p, prev, L, A):
+    """A in [0, 1] entering the year: the lagged dummy, the tenure ramp or the exponentially weighted stock."""
+    K, dl = p.get("ten_K", 1.0), p.get("ten_delta", 0.0)
+    assert not (K > 1 and dl > 0), "one attachment form at a time"
+    if K > 1:
+        return np.minimum(L, K) / K
+    if dl > 0:
+        return A
+    return prev.astype(float)
 
 
 def employment_one(p, sh, ages, q, E, b=None, c=None, d=None):
@@ -88,12 +118,22 @@ def employment_one(p, sh, ages, q, E, b=None, c=None, d=None):
                    + p["k_62"] * np.maximum(age - 62, 0)[None, :] / 10 + p["k_z"] * z)
     absorbed = np.cumsum(sh["u_abs"] < haz, 1) > 0
     prev = ~(sh["u_init"] < p_init(p, z, b, c, d))  # employed at 19?
+    L = prev.astype(float)                           # consecutive years employed up to last year
+    A = prev.astype(float)                           # attachment stock
+    dl, rho = p.get("ten_delta", 0.0), p.get("ten_rho", 0.0)
+    gam, hyp = p.get("ten_gam", 0.0), p.get("ten_hyp", 0.0)
     emp = np.empty((n, T), bool)
     for j in range(T):
-        a = np.where(prev, p["a_E"], p["a_N"])
-        nu = sh["u_nu"][:, j] < logistic(a + b * t[j] + (c + d * t[j]) * z[:, j])
+        a = p["a_E"] + (p["a_N"] - p["a_E"]) * (1.0 - attachment(p, prev, L, A))
+        if gam or hyp:
+            L1 = np.maximum(L, 1.0)
+            a = a - gam * np.log(L1) / np.log(10.0) - hyp * (1.0 - 1.0 / L1)
+        slope = (c + d * t[j]) * (1.0 - rho * np.minimum(L, 10.0) / 10.0)
+        nu = sh["u_nu"][:, j] < logistic(a + b * t[j] + slope * z[:, j])
         emp[:, j] = ~nu & ~absorbed[:, j] & alive[:, j]
         prev = emp[:, j]
+        L = np.where(prev, L + 1.0, 0.0)
+        A = dl * A + (1.0 - dl) * prev
     return emp
 
 
@@ -115,4 +155,5 @@ def earnings(theta, sh, sex, ages, q, E, g, logP):
 
 GKOS_START = dict(a_m_E=-3.353, a_m_N=-3.353, a_f_E=-3.353, a_f_N=-3.353,
                   k_m=-12.0, k_f=-12.0, k_t=0.0, k_55=0.0, k_62=0.0, k_z=0.0, pi_m=0.0, pi_f=0.0, k_t2=0.0,
-                  kappa=0.0, zbar_m=np.inf, zbar_f=np.inf)
+                  kappa=0.0, zbar_m=np.inf, zbar_f=np.inf, ten_K=1.0, ten_delta=0.0, ten_rho=0.0, ten_gam=0.0,
+                  ten_hyp=0.0)

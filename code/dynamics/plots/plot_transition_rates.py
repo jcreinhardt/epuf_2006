@@ -30,7 +30,11 @@ STYLE = {"epuf": dict(color="#8a8a8a", marker="o", label="EPUF"),
          "sexlag_abs55": dict(color="#56B4E9", marker="X", label="Modified GKOS, exit kink at 55"),
          "absq_alpha": dict(color="#56B4E9", marker="X", label="Modified GKOS"),
          "absq_zcap": dict(color="#56B4E9", marker="X", label="Modified GKOS + cap on z"),
-         "absq_alpha_entry": dict(color="#CC79A7", marker="^", label="Modified GKOS + entry margin (ad hoc)")}
+         "absq_alpha_entry": dict(color="#CC79A7", marker="^", label="Modified GKOS + entry margin (ad hoc)"),
+         "absq_ten": dict(color="#009E73", marker="D", label="Tenure ramp, no α term"),
+         "absq_grad": dict(color="#009E73", marker="D", label="Dummy + tenure gradient, no α term"),
+         "absq_hyp": dict(color="#009E73", marker="D", label="Dummy + bounded tenure gradient, no α term"),
+         "alpha_grad": dict(color="#CC79A7", marker="v", label="Modified GKOS + tenure gradient")}
 SOURCES = ["epuf", "gcohort"]       # main() appends the --new model when estimate_nonemp.py's CSV exists
 LW, MS, MIN_N = 2.4, 5.5, 20
 plt.rcParams.update({"font.size": 12, "text.color": DARK, "axes.labelcolor": DARK, "axes.edgecolor": DARK,
@@ -463,7 +467,7 @@ def main():
     ap.add_argument("--base", default="window", choices=("window", "past"))
     ap.add_argument("--no-mortality", action="store_true", help="plot the _nomort CSV")
     ap.add_argument("--new", default="none", choices=("nonemp", "sexint", "sexlag_add", "sexlag", "sexlag_abs", "sexlag_absq", "sexlag_abs55", "absq_alpha",
-                             "absq_zcap", "absq_alpha_entry", "none"),
+                             "absq_zcap", "absq_alpha_entry", "absq_ten", "absq_grad", "absq_hyp", "alpha_grad", "none"),
                     help="third line: an estimate_nonemp.py spec (figures get the suffix _<spec>, except the "
                          "12-parameter nonemp), or none")
     args = ap.parse_args()

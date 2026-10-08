@@ -63,6 +63,19 @@ Their status at 19 comes from one burn-in year (nonemp_model.p_init), so no init
 Two extensions of sexlag_absq change what the temporary logit loads on (nonemp_model: x = min(z, zbar_s) + kappa (alpha + beta t)):
   absq_alpha    + kappa, a loading on the HIP component alpha + beta t                             (7 parameters)
   absq_zcap     + zbar_m, zbar_f, a cap on z per sex: above it everybody faces the same probability (8 parameters)
+Two more replace the last-year's-status DUMMY of sexlag_absq by past attachment (nonemp_model.attachment; no kappa):
+  absq_ten      + ten_K: the intercept is a_s + g_N (1 - min(L, ten_K)/ten_K), L = consecutive years employed up to
+                last year (a ramp; ten_K <= 1 is the dummy)                                        (7 parameters)
+  absq_ewma     + ten_delta: a_s + g_N (1 - A), A = ten_delta A_{-1} + (1 - ten_delta) e_{-1}, an exponentially
+                weighted employment history that years out erode as years in build it (0 = dummy) (7 parameters)
+  absq_ten3     the ramp with its cap FIXED at 3 years                                             (6 parameters)
+  absq_rho      + ten_rho: the dummy kept, and the earnings slope attenuated with tenure,
+                (c + d t) x (1 - ten_rho min(L, 10)/10)                                           (7 parameters)
+  alpha_rho     absq_alpha + ten_rho (the fixed effect and the attenuation together)               (8 parameters)
+  absq_grad     + ten_gam: the dummy kept (step at 0 -> 1) and a gradient after it, - ten_gam log(L)/log(10),
+                ten_gam = the gain in attachment at ten years of tenure (0 = dummy)                (7 parameters)
+  absq_hyp      + ten_hyp: the same with the bounded shape - ten_hyp (1 - 1/L)                     (7 parameters)
+  alpha_grad    absq_alpha + ten_gam (fixed effect and gradient together)                          (8 parameters)
 
 Run from anywhere. The data inputs come from the database and microsimulation under --root the first time and are
 cached to processed_data/nonemp_inputs_yob<YOB>.npz (`Problem`); a checkout with that file and no database (the
@@ -107,20 +120,39 @@ SPECS = {"full": NM.NAMES, "sexint": ["a_m", "a_f"], "sexlag_add": ["a_m", "a_f"
          "sexlag": ["a_m_E", "a_m_N", "a_f_E", "a_f_N"], "sexlag_abs": ["a_m", "a_f", "g_N", "k", "k_t"],
          "sexlag_absq": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2"], "sexlag_abs55": ["a_m", "a_f", "g_N", "k", "k_t", "k_55"],
          "absq_alpha": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "kappa"],
-         "absq_zcap": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "zbar_m", "zbar_f"]}
+         "absq_zcap": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "zbar_m", "zbar_f"],
+         "absq_ten": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "ten_K"],
+         "absq_ewma": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "ten_delta"],
+         "absq_ten3": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2"],
+         "absq_rho": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "ten_rho"],
+         "alpha_rho": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "kappa", "ten_rho"],
+         "absq_grad": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "ten_gam"],
+         "absq_hyp": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "ten_hyp"],
+         "alpha_grad": ["a_m", "a_f", "g_N", "k", "k_t", "k_t2", "kappa", "ten_gam"]}
 ABSQ = [-6.243, 0.875, 0.820, -4.881, -1.828, 0.601]            # the sexlag_absq estimates (2026-10-07)
 START = {"sexint": [-3.353, -3.353], "sexlag_add": [-3.827, 2.031, 0.0], "sexlag": [-3.827, -3.827, 2.031, 2.031],
          "sexlag_abs": [-4.117, 1.880, 1.267, -5.5, 0.3],
          "sexlag_absq": [-6.182, 0.890, 0.800, -5.087, -0.248, 0.0], "sexlag_abs55": [-6.182, 0.890, 0.800, -5.087, -0.248, 0.0],
-         "absq_alpha": ABSQ + [0.0], "absq_zcap": ABSQ + [2.0, 2.0]}
+         "absq_alpha": ABSQ + [0.0], "absq_zcap": ABSQ + [2.0, 2.0],
+         "absq_ten": ABSQ + [3.0], "absq_ewma": ABSQ + [0.5], "absq_ten3": ABSQ,
+         "absq_rho": ABSQ + [0.3], "alpha_rho": [-5.813, -0.059, 1.374, -6.286, -1.783, 0.688, 0.492, 0.3],
+         "absq_grad": ABSQ + [0.5], "absq_hyp": ABSQ + [0.5],
+         "alpha_grad": [-5.813, -0.059, 1.374, -6.286, -1.783, 0.688, 0.492, 0.5]}
 # search box for --tiktak, per free parameter (intercepts in logit units; k_t per decade of age)
 BOUNDS = {"a_m": (-9.0, 0.0), "a_f": (-4.0, 5.0), "g_N": (-2.0, 5.0), "k": (-10.0, -2.0), "k_t": (-2.0, 2.0),
           "k_t2": (-1.0, 1.0), "k_55": (-2.0, 8.0), "kappa": (-1.0, 3.0), "zbar_m": (-2.0, 2.0), "zbar_f": (-2.0, 2.0),
+          "ten_K": (1.0, 15.0), "ten_delta": (0.0, 0.95), "ten_rho": (0.0, 1.0), "ten_gam": (-1.0, 4.0),
+          "ten_hyp": (-1.0, 6.0),
           "a_m_E": (-9.0, 0.0), "a_m_N": (-9.0, 3.0), "a_f_E": (-4.0, 5.0), "a_f_N": (-4.0, 6.0)}
 GKOS = {"sexint": [-3.353] * 2, "sexlag_add": [-3.353, -3.353, 0.0], "sexlag": [-3.353] * 4,
         "sexlag_abs": [-3.353, -3.353, 0.0, -50.0, 0.0], "sexlag_absq": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0],
         "sexlag_abs55": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0], "absq_alpha": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 0.0],
-        "absq_zcap": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 50.0, 50.0]}
+        "absq_zcap": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 50.0, 50.0],
+        "absq_ten": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 1.0], "absq_ewma": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 0.0],
+        "absq_ten3": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0], "absq_rho": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 0.0],
+        "alpha_rho": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 0.0, 0.0],
+        "absq_grad": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 0.0], "absq_hyp": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 0.0],
+        "alpha_grad": [-3.353, -3.353, 0.0, -50.0, 0.0, 0.0, 0.0, 0.0]}
 
 
 def expand(v, spec):
@@ -131,11 +163,13 @@ def expand(v, spec):
     th = dict(NM.GKOS_START, k_m=-50.0, k_f=-50.0)          # absorbing hazard off (logistic(-50) ~ 2e-22)
     if spec == "sexint":
         th.update(a_m_E=v[0], a_m_N=v[0], a_f_E=v[1], a_f_N=v[1])
-    elif spec in ("sexlag_add", "sexlag_abs", "sexlag_absq", "sexlag_abs55", "absq_alpha", "absq_zcap"):
+    elif spec in ("sexlag_add", "sexlag_abs", "sexlag_absq", "sexlag_abs55", "absq_alpha", "absq_zcap", "absq_ten",
+                  "absq_ewma", "absq_ten3", "absq_rho", "alpha_rho", "absq_grad", "absq_hyp", "alpha_grad"):
         th.update(a_m_E=v[0], a_m_N=v[0] + v[2], a_f_E=v[1], a_f_N=v[1] + v[2], pi_m=np.nan, pi_f=np.nan)
         if spec != "sexlag_add":                            # permanent exit logistic(k + k_t t [+ ...]), both sexes
             th.update(k_m=v[3], k_f=v[3], k_t=v[4])
-        if spec in ("sexlag_absq", "absq_alpha", "absq_zcap"):
+        if spec in ("sexlag_absq", "absq_alpha", "absq_zcap", "absq_ten", "absq_ewma", "absq_ten3", "absq_rho",
+                    "alpha_rho", "absq_grad", "absq_hyp", "alpha_grad"):
             th.update(k_t2=v[5])
         elif spec == "sexlag_abs55":
             th.update(k_55=v[5])
@@ -143,6 +177,22 @@ def expand(v, spec):
             th.update(kappa=v[6])
         elif spec == "absq_zcap":
             th.update(zbar_m=v[6], zbar_f=v[7])
+        elif spec == "absq_ten":
+            th.update(ten_K=v[6])
+        elif spec == "absq_ewma":
+            th.update(ten_delta=v[6])
+        elif spec == "absq_ten3":
+            th.update(ten_K=3.0)
+        elif spec == "absq_rho":
+            th.update(ten_rho=v[6])
+        elif spec == "alpha_rho":
+            th.update(kappa=v[6], ten_rho=v[7])
+        elif spec == "absq_grad":
+            th.update(ten_gam=v[6])
+        elif spec == "absq_hyp":
+            th.update(ten_hyp=v[6])
+        elif spec == "alpha_grad":
+            th.update(kappa=v[6], ten_gam=v[7])
     else:
         th.update(dict(zip(SPECS["sexlag"], v)), pi_m=np.nan, pi_f=np.nan)
     return np.array([th[k] for k in NM.NAMES])
